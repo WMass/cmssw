@@ -89,7 +89,7 @@ def customizeNANOTP(process):
             isStandAloneUpdatedAtVtx = ExtVar(cms.InputTag("mergedStandAloneMuons:muonUpdatedAtVtx"),bool, doc="is standalone muon track updated at vertex"),
     )
 
-    passStandalone = "(standAloneMuon().isNonnull())"
+    passStandalone = "(standAloneMuon().isNonnull() && standAloneMuon().pt() > 15)"
     process.selectedPatMuons.cut = cms.string("||".join([passStandalone, process.selectedPatMuons.cut.value()]))
     process.finalMuons.cut = cms.string("||".join([passStandalone, process.finalMuons.cut.value()]))
     process.linkedMuons.cut = process.finalMuons.cut
