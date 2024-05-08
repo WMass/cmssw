@@ -90,7 +90,9 @@ def customizeNANOTP(process):
     )
 
     passStandalone = "(standAloneMuon().isNonnull() && standAloneMuon().pt() > 15)"
+    passLowPt = "(pt <= 15)" #reverts the pt cut for tag-and-probe
     process.selectedPatMuons.cut = cms.string("||".join([passStandalone, process.selectedPatMuons.cut.value()]))
+    process.finalMuons.cut = cms.string("||".join([passLowPt, process.finalMuons.cut.value()]))
     process.finalMuons.cut = cms.string("||".join([passStandalone, process.finalMuons.cut.value()]))
     process.linkedMuons.cut = process.finalMuons.cut
     return process
