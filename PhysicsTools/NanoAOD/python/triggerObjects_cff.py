@@ -216,6 +216,26 @@ run2_HLTconditions_2016.toModify(
   selections = selections2016
 )
 
+#2017 and 2018 are same filter string(could used one modification block)
+selectionsPhase1 = copy.deepcopy(triggerObjectTable.selections)
+for sel in selectionsPhase1:
+    if sel.name=='Muon':
+        sel.qualityBits = cms.string(sel.qualityBits.value() + \
+                                     " + 4096*filter('hltL3crIsoL1sSingleMu22L1f0L2f10QL3f24QL3trkIsoFiltered0p07')" \
+                                     " + 8192*filter('hltL3crIsoL1sMu22Or25L1f0L2f10QL3f27QL3trkIsoFiltered0p07')")
+        sel.qualityBitsDoc = cms.string(sel.qualityBitsDoc.value() + ", 4096 = IsoMu24, 8192 = IsoMu27")
+
+#change for 2017
+run2_HLTconditions_2017.toModify(
+  triggerObjectTable,
+  selections = selectionsPhase1
+)
+#change for 2018
+run2_HLTconditions_2018.toModify(
+  triggerObjectTable,
+  selections = selectionsPhase1
+)
+
 from PhysicsTools.PatUtils.L1PrefiringWeightProducer_cff import prefiringweight
 #Next lines are for UL2016 maps
 (run2_muon_2016 & tracker_apv_vfp30_2016).toModify( prefiringweight, DataEraECAL = cms.string("UL2016preVFP"),  DataEraMuon = cms.string("2016preVFP"))

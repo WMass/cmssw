@@ -471,7 +471,10 @@ def nanoAOD_customizeData(process):
                                     record = cms.string("GeometryFileRcd"),tag = cms.string("XMLFILE_Geometry_2016_81YV1_Extended2016_mc"),label = cms.untracked.string("Extended"),
                                     ),
                                 )
-
+    vpset_2017 = cms.VPSet(cms.PSet(record = cms.string("GeometryFileRcd"),tag = cms.string("XMLFILE_Geometry_92YV5_Extended2017Plan1_mc"),label = cms.untracked.string("Extended"),),)
+    vpset_2018 = cms.VPSet(cms.PSet(record = cms.string("GeometryFileRcd"),tag = cms.string("XMLFILE_Geometry_92YV6_Extended2018_mc"),label = cms.untracked.string("Extended"),),)
+    run2_muon_2017.toModify(process.GlobalTag, toGet=vpset_2017)
+    run2_muon_2018.toModify(process.GlobalTag, toGet=vpset_2018)
     # load 3d field map and use it for g4e propagator, geant4 internals via geometry producer and a few other places related to the track refit
     from MagneticField.ParametrizedEngine.parametrizedMagneticField_PolyFit3D_cfi import ParametrizedMagneticFieldProducer as PolyFit3DMagneticFieldProducer
     process.PolyFit3DMagneticFieldProducer = PolyFit3DMagneticFieldProducer
