@@ -35,26 +35,18 @@ process.options = cms.untracked.PSet(
     numberOfStreams=cms.untracked.uint32(0)
 )
 
-# Step-2 V0 candidate finder: re-pairs the deduplicated daughter tracks,
-# applies V0Producer-like cuts, picks the best candidate per event.
-process.load('Analysis.HitAnalyzer.KsToPiPiCandidateProducer_cfi')
-process.selectedKsTracks = process.KsToPiPiCandidateProducer.clone(
-    tracks = cms.InputTag('ALCARECOTkAlKsToPiPi'),
-    # other parameters (mass hypotheses, tryBothAssignments, V0 mass window,
-    # cosThetaXYMin, LxyOverSigmaMin) are taken from the cfi defaults
-    # (V0Producer-style: KS PDG +/-70 MeV, cosThetaXY > 0.998, Lxy/sigma > 15).
-)
-
-# CVH 2-track refit + flat tree, KS configuration (both pions).
+# CVH 2-track refit + flat tree, KS configuration (both pions). The cfi
+# defaults srcCandidates to ALCARECOTkAlKsToPiPiResonances (the persisted
+# candidate collection from stage-1's VertexCompositeCandidateRemapper);
+# the CVH module iterates one tree row per candidate.
 process.load('Analysis.HitAnalyzer.ResidualGlobalCorrectionMakerTwoTrackPiPiG4e_cfi')
 process.globalCorKs = process.globalCorKs.clone(
-    src = 'selectedKsTracks',
     useIdealGeometry = False,
     outprefix = 'globalcor_ks',
 )
 
-# BeamSpot is consumed by V0CandidateProducer. The ALCARECO output does not
-# keep offlineBeamSpot, so produce a fresh one from the standard service.
+# CVH base consumes offlineBeamSpot; ALCARECO does not keep it, so produce
+# a fresh one from the standard service.
 process.offlineBeamSpot = cms.EDProducer('BeamSpotProducer')
 
 process.GlobalTag = GlobalTag(process.GlobalTag, 'auto:run2_data', '')
@@ -70,6 +62,5 @@ process.XMLFromDBSource.label = cms.string('Extended')
 process.p = cms.Path(
     process.geopro *
     process.offlineBeamSpot *
-    process.selectedKsTracks *
     process.globalCorKs
 )
