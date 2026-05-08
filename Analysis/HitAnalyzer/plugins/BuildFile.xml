@@ -1,4 +1,4 @@
-<Flags CXXFLAGS="-g"/>
+<Flags CXXFLAGS="-g -Wno-error -Wno-unused-variable"/>
 <use name="FWCore/Framework"/>
 <use name="FWCore/PluginManager"/>
 <use name="FWCore/ParameterSet"/>
@@ -37,6 +37,7 @@
 <use name="RecoVertex/LinearizationPointFinders"/>
 <use name="RecoVertex/KinematicFitPrimitives"/>
 <use name="RecoVertex/KinematicFit"/>
+<use name="DataFormats/BeamSpot"/>
 <use name="Alignment/CommonAlignment"/>
 <use name="TrackPropagation/Geant4e"/>
 

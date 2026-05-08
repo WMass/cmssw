@@ -120,7 +120,16 @@ ResidualGlobalCorrectionMakerBase::ResidualGlobalCorrectionMakerBase(const edm::
   
   inputTrackOrig_ = consumes<reco::TrackCollection>(edm::InputTag(iConfig.getParameter<edm::InputTag>("src")));
 
-  
+  // Optional persisted-candidate input (stage-1 ALCAReco *Resonances).
+  // If the cfi omits srcCandidates or sets it to an empty InputTag, stage-2
+  // falls back to the legacy j>i track-pair loop over `src`.
+  inputCandidatesTag_ = iConfig.existsAs<edm::InputTag>("srcCandidates")
+      ? iConfig.getParameter<edm::InputTag>("srcCandidates")
+      : edm::InputTag();
+  if (!inputCandidatesTag_.label().empty()) {
+    inputCandidates_ = consumes<reco::VertexCompositeCandidateCollection>(inputCandidatesTag_);
+  }
+
   fitFromGenParms_ = iConfig.getParameter<bool>("fitFromGenParms");
   fitFromSimParms_ = iConfig.getParameter<bool>("fitFromSimParms");
   fillTrackTree_ = iConfig.getParameter<bool>("fillTrackTree");
@@ -240,7 +249,16 @@ void ResidualGlobalCorrectionMakerBase::beginStream(edm::StreamID streamid)
   if (fillTrackTree_) {
     tree = new TTree("tree","");
     const int basketSize = 4*1024*1024;
-    tree->SetAutoFlush(0);
+    // Disable in-job AutoSave (was crashing inside TTree::Streamer at the
+    // 300 MB threshold for fillGrads_=true). Tree is still written at Close.
+    tree->SetAutoSave(0);
+    // Force AutoFlush by entry count, not byte threshold. ROOT 6.14
+    // converts SetAutoFlush(-N_bytes) to a fixed entry count at first
+    // fill, so a heavy hesspackedv tail can produce 100+ MB clusters
+    // even when -N was 100 MB. With 100 branches at ~4 MB basketSize,
+    // 200 entries / cluster ~ 20 MB peak, predictable independent of
+    // per-event size.
+    tree->SetAutoFlush(200);
     
     tree->Branch("nParms", &nParms, basketSize);
 //     tree->Branch("globalidxv", globalidxv.data(), "globalidxv[nParms]/i", basketSize);
