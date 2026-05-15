@@ -31,6 +31,11 @@ opts.register('useScalarPot3D', True, VarParsing.VarParsing.multiplicity.singlet
               VarParsing.VarParsing.varType.bool,
               'use the spherical-harmonic scalar-potential field  '
               'in the CVH refit (default; only model supported in this port)')
+opts.register('useOpera3D', False, VarParsing.VarParsing.multiplicity.singleton,
+              VarParsing.VarParsing.varType.bool,
+              'use the full 3D TOSCA volumetric grid (160812) as the baseline '
+              'field for the propagator + geopro + globalCor; takes precedence '
+              'over useScalarPot3D when True.')
 opts.register('scalarPot3DInitFile', '', VarParsing.VarParsing.multiplicity.singleton,
               VarParsing.VarParsing.varType.string,
               'coefficient dump file produced by mfs/dump_coeffs_for_cmssw.py. '
@@ -47,7 +52,9 @@ opts.register('epsilonFDClosure', 1e-4, VarParsing.VarParsing.multiplicity.singl
 opts.parseArguments()
 if not opts.scalarPot3DInitFile:
     raise SystemExit(
-        "scalarPot3DInitFile=<path> is required (coefficient dump file)")
+        "scalarPot3DInitFile=<path> is required (coefficient dump file): "
+        "the basis evaluator in globalCor needs it for chain-rule columns "
+        "even when useOpera3D=True swaps the baseline field model.")
 
 JPSI_TRIGGERS = [
     "HLT_Dimuon0_Jpsi_Muon",
@@ -176,20 +183,35 @@ process.globalCor = cms.EDProducer(
 # from scalar-potential field model. Independent from
 # nano_cff.setup3DFieldForRefit (which assumes the full set of seven
 # CVH-side consumers from the NanoAOD configuration).
-if not opts.useScalarPot3D:
+if opts.useOpera3D:
+    # Use the full 3D TOSCA volumetric grid (160812) as the baseline field
+    # for the propagator / geopro / globalCor instead of the scalar-potential
+    # ScalarPot3D model. Provided as an alternative field-model option for
+    # cross-checks and B-field studies.
+    from MagneticField.Engine.volumeBasedMagneticField_160812_cfi import \
+        VolumeBasedMagneticFieldESProducer as Opera3DMagneticFieldProducer
+    from MagneticField.Engine.volumeBasedMagneticField_160812_cfi import magfield as MagneticFieldGeometry
+    process.magfield = MagneticFieldGeometry
+    process.es_prefer_magfield_cvhrefit = cms.ESPrefer("XMLIdealGeometryESSource", "magfield")
+    process.Opera3DMagneticFieldProducer = Opera3DMagneticFieldProducer
+    fieldlabel = "grid_160812_3_8t"
+    process.Opera3DMagneticFieldProducer.label = fieldlabel
+    process.Opera3DMagneticFieldProducer.useParametrizedTrackerField = cms.bool(False)
+elif not opts.useScalarPot3D:
     raise RuntimeError(
         "useScalarPot3D=False is no longer supported; the legacy non-thread-safe "
         "wrapper class is not part of this port. Use the ScalarPot3D model.")
-if not opts.scalarPot3DInitFile:
-    raise RuntimeError(
-        "useScalarPot3D=True requires scalarPot3DInitFile to point "
-        "at a coefficient dump file produced by mfs/dump_coeffs_for_cmssw.py")
-from MagneticField.ParametrizedEngine.parametrizedMagneticField_ScalarPot3D_cfi \
-    import ParametrizedMagneticFieldProducer as ScalarPot3DMagneticFieldProducer
-process.ScalarPot3DMagneticFieldProducer = ScalarPot3DMagneticFieldProducer.clone()
-process.ScalarPot3DMagneticFieldProducer.parameters.InitFile = opts.scalarPot3DInitFile
-fieldlabel = "ScalarPot3DMf"
-process.ScalarPot3DMagneticFieldProducer.label = fieldlabel
+else:
+    if not opts.scalarPot3DInitFile:
+        raise RuntimeError(
+            "useScalarPot3D=True requires scalarPot3DInitFile to point "
+            "at a coefficient dump file produced by mfs/dump_coeffs_for_cmssw.py")
+    from MagneticField.ParametrizedEngine.parametrizedMagneticField_ScalarPot3D_cfi \
+        import ParametrizedMagneticFieldProducer as ScalarPot3DMagneticFieldProducer
+    process.ScalarPot3DMagneticFieldProducer = ScalarPot3DMagneticFieldProducer.clone()
+    process.ScalarPot3DMagneticFieldProducer.parameters.InitFile = opts.scalarPot3DInitFile
+    fieldlabel = "ScalarPot3DMf"
+    process.ScalarPot3DMagneticFieldProducer.label = fieldlabel
 process.geopro.MagneticFieldLabel = fieldlabel
 process.Geant4ePropagator.MagneticFieldLabel = fieldlabel
 # Activate the CVH-specific propagator path: instantiates the custom fluct
