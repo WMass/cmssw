@@ -37,9 +37,9 @@ public:
   static void fillDescriptions(ConfigurationDescriptions& descriptions);
 
 private:
-  const std::string fieldlabel_;
   edm::ESGetToken<MagneticField, IdealMagneticFieldRecord> magfieldToken_;
   edm::ESGetToken<SiPixelTemplateDBObject, SiPixelTemplateDBObjectRcd> templateToken_;
+  const std::string fieldlabel_;
 };
 
 SiPixelTemplateDBObjectESProducer::SiPixelTemplateDBObjectESProducer(const edm::ParameterSet& iConfig)
@@ -78,6 +78,7 @@ std::shared_ptr<const SiPixelTemplateDBObject> SiPixelTemplateDBObjectESProducer
 
 void SiPixelTemplateDBObjectESProducer::fillDescriptions(edm::ConfigurationDescriptions& descriptions) {
   edm::ParameterSetDescription desc;
+  desc.add<std::string>("MagneticFieldLabel", "");
   descriptions.addWithDefaultLabel(desc);
 }
 
