@@ -472,11 +472,26 @@ def nanoAOD_customizeData(process):
                                     ),
                                 )
 
-    # load 3d field map and use it for g4e propagator, geant4 internals via geometry producer and a few other places related to the track refit
-    from MagneticField.ParametrizedEngine.parametrizedMagneticField_PolyFit3D_cfi import ParametrizedMagneticFieldProducer as PolyFit3DMagneticFieldProducer
-    process.PolyFit3DMagneticFieldProducer = PolyFit3DMagneticFieldProducer
-    fieldlabel = "PolyFit3DMf"
-    process.PolyFit3DMagneticFieldProducer.label = fieldlabel
+    # # load 3d field map and use it for g4e propagator, geant4 internals via geometry producer and a few other places related to the track refit
+    # from MagneticField.ParametrizedEngine.parametrizedMagneticField_PolyFit3D_cfi import ParametrizedMagneticFieldProducer as PolyFit3DMagneticFieldProducer
+    # process.PolyFit3DMagneticFieldProducer = PolyFit3DMagneticFieldProducer
+    # fieldlabel = "PolyFit3DMf"
+    # process.PolyFit3DMagneticFieldProducer.label = fieldlabel
+
+    # load nominal TOSCA model 160812 (grid files shipped with the release via cms-data, unlike 170812;
+    # the two versions differ only in the steel BH-curve and are negligibly different inside the tracker).
+    # The cfi also provides the magfield XMLIdealGeometryESSource which supplies
+    # DDCompactView("magfield") needed by VolumeBasedMagneticFieldESProducer.
+    from MagneticField.Engine.volumeBasedMagneticField_160812_cfi import VolumeBasedMagneticFieldESProducer as MagneticFieldProducer
+    from MagneticField.Engine.volumeBasedMagneticField_160812_cfi import magfield as MagneticFieldGeometry
+    process.magfield = MagneticFieldGeometry
+    process.es_prefer_magfield_cvhrefit = cms.ESPrefer("XMLIdealGeometryESSource", "magfield")
+    process.Opera3DMagneticFieldProducer = MagneticFieldProducer
+    fieldlabel = "grid_160812_3_8t"
+    process.Opera3DMagneticFieldProducer.label = fieldlabel
+    # disable 2D parameterization in tracker and use slower but more accurate 3D splines of original data
+    process.Opera3DMagneticFieldProducer.useParametrizedTrackerField = cms.bool(False)
+
     process.geopro.MagneticFieldLabel = fieldlabel
     process.Geant4ePropagator.MagneticFieldLabel = fieldlabel
     process.stripCPEESProducer.MagneticFieldLabel = fieldlabel
