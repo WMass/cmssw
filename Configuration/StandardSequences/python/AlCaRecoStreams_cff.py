@@ -23,10 +23,17 @@ from Alignment.CommonAlignmentProducer.ALCARECOTkAlMuonIsolated_cff import *
 from Alignment.CommonAlignmentProducer.ALCARECOTkAlMuonIsolatedPA_cff import *
 # AlCaReco for track based alignment using J/Psi events
 from Alignment.CommonAlignmentProducer.ALCARECOTkAlJpsiMuMu_cff import *
+from Alignment.CommonAlignmentProducer.ALCARECOTkAlDstToD0Pi_cff import *
+# AlCaReco for track based alignment using J/Psi + X events (B-meson / quarkonium)
+from Alignment.CommonAlignmentProducer.ALCARECOTkAlJpsiX_cff import *
 # AlCaReco for track based alignment using Upsilon events
 from Alignment.CommonAlignmentProducer.ALCARECOTkAlUpsilonMuMu_cff import *
 # AlCaReco for track based alignment using Upsilon events for PA data-taking
 from Alignment.CommonAlignmentProducer.ALCARECOTkAlUpsilonMuMuPA_cff import *
+# AlCaReco for track based alignment using KS->pi+pi- events
+from Alignment.CommonAlignmentProducer.ALCARECOTkAlKsToPiPi_cff import *
+# AlCaReco for track based alignment using Lambda0->proton+pi- events
+from Alignment.CommonAlignmentProducer.ALCARECOTkAlLambdaToProtonPi_cff import *
 # AlCaReco for track based alignment using MinBias events
 from Alignment.CommonAlignmentProducer.ALCARECOTkAlMinBias_cff import *
 
@@ -166,7 +173,11 @@ pathALCARECOTkAlZMuMuPA = cms.Path(seqALCARECOTkAlZMuMuPA*ALCARECOTkAlZMuMuPADQM
 pathALCARECOTkAlMuonIsolated = cms.Path(seqALCARECOTkAlMuonIsolated*ALCARECOTkAlMuonIsolatedDQM)
 pathALCARECOTkAlMuonIsolatedPA = cms.Path(seqALCARECOTkAlMuonIsolatedPA*ALCARECOTkAlMuonIsolatedPADQM)
 pathALCARECOTkAlJpsiMuMu = cms.Path(seqALCARECOTkAlJpsiMuMu*ALCARECOTkAlJpsiMuMuDQM)
+pathALCARECOTkAlJpsiX = cms.Path(seqALCARECOTkAlJpsiX)
+pathALCARECOTkAlDstToD0Pi = cms.Path(seqALCARECOTkAlDstToD0Pi)
 pathALCARECOTkAlUpsilonMuMu = cms.Path(seqALCARECOTkAlUpsilonMuMu*ALCARECOTkAlUpsilonMuMuDQM)
+pathALCARECOTkAlKsToPiPi = cms.Path(seqALCARECOTkAlKsToPiPi)
+pathALCARECOTkAlLambdaToProtonPi = cms.Path(seqALCARECOTkAlLambdaToProtonPi)
 pathALCARECOTkAlUpsilonMuMuPA = cms.Path(seqALCARECOTkAlUpsilonMuMuPA*ALCARECOTkAlUpsilonMuMuPADQM)
 pathALCARECOTkAlMinBias = cms.Path(seqALCARECOTkAlMinBias*ALCARECOTkAlMinBiasDQM)
 pathALCARECOTkAlMinBias = cms.Path(seqALCARECOTkAlMinBias*ALCARECOTkAlMinBiasDQM)
@@ -330,12 +341,48 @@ ALCARECOStreamTkAlJpsiMuMu = cms.FilteredStream(
 	dataTier = cms.untracked.string('ALCARECO')
 	)
 
+ALCARECOStreamTkAlJpsiX = cms.FilteredStream(
+	responsible = 'Pietro Lugato',
+	name = 'TkAlJpsiX',
+	paths  = (pathALCARECOTkAlJpsiX),
+	content = OutALCARECOTkAlJpsiX.outputCommands,
+	selectEvents = OutALCARECOTkAlJpsiX.SelectEvents,
+	dataTier = cms.untracked.string('ALCARECO')
+	)
+
+ALCARECOStreamTkAlDstToD0Pi = cms.FilteredStream(
+	responsible = 'emanuele manoni',
+	name = 'TkAlDstToD0Pi',
+	paths  = (pathALCARECOTkAlDstToD0Pi),
+	content = OutALCARECOTkAlDstToD0Pi.outputCommands,
+	selectEvents = OutALCARECOTkAlDstToD0Pi.SelectEvents,
+	dataTier = cms.untracked.string('ALCARECO')
+	)
+
 ALCARECOStreamTkAlUpsilonMuMu = cms.FilteredStream(
 	responsible = 'Andreas Mussgiller',
 	name = 'TkAlUpsilonMuMu',
 	paths  = (pathALCARECOTkAlUpsilonMuMu),
 	content = OutALCARECOTkAlUpsilonMuMu.outputCommands,
 	selectEvents = OutALCARECOTkAlUpsilonMuMu.SelectEvents,
+	dataTier = cms.untracked.string('ALCARECO')
+	)
+
+ALCARECOStreamTkAlKsToPiPi = cms.FilteredStream(
+	responsible = 'David Walter',
+	name = 'TkAlKsToPiPi',
+	paths  = (pathALCARECOTkAlKsToPiPi),
+	content = OutALCARECOTkAlKsToPiPi.outputCommands,
+	selectEvents = OutALCARECOTkAlKsToPiPi.SelectEvents,
+	dataTier = cms.untracked.string('ALCARECO')
+	)
+
+ALCARECOStreamTkAlLambdaToProtonPi = cms.FilteredStream(
+	responsible = 'David Walter',
+	name = 'TkAlLambdaToProtonPi',
+	paths  = (pathALCARECOTkAlLambdaToProtonPi),
+	content = OutALCARECOTkAlLambdaToProtonPi.outputCommands,
+	selectEvents = OutALCARECOTkAlLambdaToProtonPi.SelectEvents,
 	dataTier = cms.untracked.string('ALCARECO')
 	)
 
