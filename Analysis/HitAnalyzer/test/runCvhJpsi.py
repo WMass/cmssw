@@ -37,6 +37,11 @@ opts.register('useScalarPot3D', True, VarParsing.VarParsing.multiplicity.singlet
               VarParsing.VarParsing.varType.bool,
               'use the spherical-harmonic scalar-potential field  '
               'in the CVH refit (default; only model supported in this port)')
+opts.register('useOpera3D', False, VarParsing.VarParsing.multiplicity.singleton,
+              VarParsing.VarParsing.varType.bool,
+              'use the full 3D TOSCA volumetric grid (160812) as the baseline '
+              'field for the propagator + geopro + globalCor; takes precedence '
+              'over useScalarPot3D when True.')
 opts.register('scalarPot3DInitFile', '', VarParsing.VarParsing.multiplicity.singleton,
               VarParsing.VarParsing.varType.string,
               'coefficient dump file produced by mfs/dump_coeffs_for_cmssw.py. '
@@ -78,6 +83,15 @@ opts.register('pixelMinSizeX', 2, VarParsing.VarParsing.multiplicity.singleton,
               VarParsing.VarParsing.varType.int,
               'minimum pixel cluster size in x for a hit to stay in the fit '
               '(default 2 = baseline sizeX>1 cut; 1 admits all clusters)')
+opts.register('materialGroupsFile', '', VarParsing.VarParsing.multiplicity.singleton,
+              VarParsing.VarParsing.varType.string,
+              'global material model grouping-tier rules file '
+              '(Analysis/HitAnalyzer/data/materialGroups{50,100}.txt); empty = off')
+opts.register('globalMaterialModel', False, VarParsing.VarParsing.multiplicity.singleton,
+              VarParsing.VarParsing.varType.bool,
+              'replace the per-module material parameters (parmtype 7) with the '
+              'parmtype-15 global material groups of materialGroupsFile '
+              '(exclusive switch; requires materialGroupsFile)')
 opts.register('propagationDirection', 'anyDirection', VarParsing.VarParsing.multiplicity.singleton,
               VarParsing.VarParsing.varType.string,
               'Geant4ePropagator PropagationDirection. "anyDirection" (default) '
@@ -89,7 +103,9 @@ opts.register('propagationDirection', 'anyDirection', VarParsing.VarParsing.mult
 opts.parseArguments()
 if not opts.scalarPot3DInitFile:
     raise SystemExit(
-        "scalarPot3DInitFile=<path> is required (coefficient dump file)")
+        "scalarPot3DInitFile=<path> is required (coefficient dump file): "
+        "the basis evaluator in globalCor needs it for chain-rule columns "
+        "even when useOpera3D=True swaps the baseline field model.")
 
 JPSI_TRIGGERS = [
     "HLT_Dimuon0_Jpsi_Muon",
@@ -236,6 +252,8 @@ process.globalCor = cms.EDProducer(
     debugPerIterDump=cms.bool(bool(opts.debugPerIterDump)),
     nIters=cms.uint32(int(opts.nIters)),
     edmConvergence=cms.double(float(opts.edmConvergence)),
+    materialGroupsFile=cms.string(opts.materialGroupsFile),
+    globalMaterialModel=cms.bool(bool(opts.globalMaterialModel)),
     outprefix=cms.untracked.string("globalcor"),
     # MT G4Error master: GlobalCache config for CvhMasterThread. The master
     # spawns a dedicated thread in initializeGlobalCache that builds DDDWorld
@@ -258,25 +276,42 @@ process.globalCor = cms.EDProducer(
 # from scalar-potential field model. Independent from
 # nano_cff.setup3DFieldForRefit (which assumes the full set of seven
 # CVH-side consumers from the NanoAOD configuration).
-if not opts.useScalarPot3D:
+if opts.useOpera3D:
+    # Use the full 3D TOSCA volumetric grid (160812) as the baseline field
+    # for the propagator / geopro / globalCor instead of the scalar-potential
+    # ScalarPot3D model. Provided as an alternative field-model option for
+    # cross-checks and B-field studies.
+    from MagneticField.Engine.volumeBasedMagneticField_160812_cfi import \
+        VolumeBasedMagneticFieldESProducer as Opera3DMagneticFieldProducer
+    from MagneticField.Engine.volumeBasedMagneticField_160812_cfi import magfield as MagneticFieldGeometry
+    process.magfield = MagneticFieldGeometry
+    process.es_prefer_magfield_cvhrefit = cms.ESPrefer("XMLIdealGeometryESSource", "magfield")
+    process.Opera3DMagneticFieldProducer = Opera3DMagneticFieldProducer
+    fieldlabel = "grid_160812_3_8t"
+    process.Opera3DMagneticFieldProducer.label = fieldlabel
+    process.Opera3DMagneticFieldProducer.useParametrizedTrackerField = cms.bool(False)
+    # Route the labelled field into the CPEs as in the production data refit
+    # (nano_cff.nanoAOD_customizeData) and the 10_6 cross-release driver:
+    # the Lorentz-drift in the hit re-evaluation then uses the same field.
+    for _cpe in ("stripCPEESProducer", "StripCPEfromTrackAngleESProducer",
+                 "siPixelTemplateDBObjectESProducer", "templates"):
+        if hasattr(process, _cpe):
+            getattr(process, _cpe).MagneticFieldLabel = fieldlabel
+elif not opts.useScalarPot3D:
     raise RuntimeError(
         "useScalarPot3D=False is no longer supported; the legacy non-thread-safe "
         "wrapper class is not part of this port. Use the ScalarPot3D model.")
-if not opts.scalarPot3DInitFile:
-    raise RuntimeError(
-        "useScalarPot3D=True requires scalarPot3DInitFile to point "
-        "at a coefficient dump file produced by mfs/dump_coeffs_for_cmssw.py")
-from MagneticField.ParametrizedEngine.parametrizedMagneticField_ScalarPot3D_cfi \
-    import ParametrizedMagneticFieldProducer as ScalarPot3DMagneticFieldProducer
-process.ScalarPot3DMagneticFieldProducer = ScalarPot3DMagneticFieldProducer.clone()
-process.ScalarPot3DMagneticFieldProducer.parameters.InitFile = opts.scalarPot3DInitFile
-fieldlabel = "ScalarPot3DMf"
-process.ScalarPot3DMagneticFieldProducer.label = fieldlabel
-# geopro lives in geantRefit_cff but is no longer wired into the path --
-# CvhMasterThread (GlobalCache of the residual-maker) replaces its world /
-# field setup with an MT-safe master-thread flow. Keeping the attribute
-# assignment so re-enabling geopro for diagnostics doesn't need an extra
-# line; harmless when the module isn't in any Path.
+else:
+    if not opts.scalarPot3DInitFile:
+        raise RuntimeError(
+            "useScalarPot3D=True requires scalarPot3DInitFile to point "
+            "at a coefficient dump file produced by mfs/dump_coeffs_for_cmssw.py")
+    from MagneticField.ParametrizedEngine.parametrizedMagneticField_ScalarPot3D_cfi \
+        import ParametrizedMagneticFieldProducer as ScalarPot3DMagneticFieldProducer
+    process.ScalarPot3DMagneticFieldProducer = ScalarPot3DMagneticFieldProducer.clone()
+    process.ScalarPot3DMagneticFieldProducer.parameters.InitFile = opts.scalarPot3DInitFile
+    fieldlabel = "ScalarPot3DMf"
+    process.ScalarPot3DMagneticFieldProducer.label = fieldlabel
 process.geopro.MagneticFieldLabel = fieldlabel
 process.Geant4ePropagator.MagneticFieldLabel = fieldlabel
 # CvhMaster builds its master G4 field via SimG4Core's FieldBuilder on top
