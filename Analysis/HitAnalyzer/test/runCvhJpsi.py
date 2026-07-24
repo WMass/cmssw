@@ -80,6 +80,11 @@ opts.register('keepPixelEdgeHits', False, VarParsing.VarParsing.multiplicity.sin
               '(isOnEdge) in the fit instead of demoting them to inactive; '
               'the pixelMinSizeX CPE-quality cut applies independently '
               '(default False = baseline)')
+opts.register('pixelHitClassCorrections', False, VarParsing.VarParsing.multiplicity.singleton,
+              VarParsing.VarParsing.varType.bool,
+              'register the per-pixel-module pathology-class correction '
+              'parameters (parmtypes 16-21) and emit their Jacobian '
+              'columns; use with keepPixelEdgeHits=True pixelMinSizeX=1')
 opts.register('pixelMinSizeX', 2, VarParsing.VarParsing.multiplicity.singleton,
               VarParsing.VarParsing.varType.int,
               'minimum pixel cluster size in x for a hit to stay in the fit '
@@ -168,11 +173,13 @@ from TrackPropagation.Geant4e.cvhMaster_cfi import CvhMasterPSet
 process.maxEvents = cms.untracked.PSet(input=cms.untracked.int32(opts.nEvents))
 
 assert opts.input, "must set input=<path> on the cmsRun command line"
-# Accept local paths (prepend "file:") or xrootd URLs as-is.
-_url = opts.input if opts.input.startswith(("root://", "file:")) else "file:" + opts.input
+# Accept local paths (prepend "file:") or xrootd URLs as-is; comma-separated
+# lists are split (backward compatible: single paths contain no comma).
+_urls = [p if p.startswith(("root://", "file:")) else "file:" + p
+         for p in opts.input.split(',') if p.strip()]
 process.source = cms.Source(
     "PoolSource",
-    fileNames=cms.untracked.vstring(_url),
+    fileNames=cms.untracked.vstring(*_urls),
     secondaryFileNames=cms.untracked.vstring(),
 )
 
@@ -247,6 +254,7 @@ process.globalCor = cms.EDProducer(
     applyHitQuality=cms.bool(True),
     keepPixelEdgeHits=cms.bool(bool(opts.keepPixelEdgeHits)),
     pixelMinSizeX=cms.int32(int(opts.pixelMinSizeX)),
+    pixelHitClassCorrections=cms.bool(bool(opts.pixelHitClassCorrections)),
     doVtxConstraint=cms.bool(False),
     doMassConstraint=cms.bool(bool(opts.doMassConstraint)),
     massConstraint=cms.double(3.0969),
