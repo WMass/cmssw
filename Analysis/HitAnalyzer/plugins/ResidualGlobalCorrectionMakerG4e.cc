@@ -590,15 +590,22 @@ void ResidualGlobalCorrectionMakerG4e::produce(edm::Event &iEvent, const edm::Ev
       if (detglued != nullptr && !(*it)->isValid()) {
 //         bool order = detglued->stereoDet()->surface().position().mag() > detglued->monoDet()->surface().position().mag();
         
-        const auto stereopos = detglued->stereoDet()->surface().position();
-        const auto monopos = detglued->monoDet()->surface().position();
-        
+        // decide the inner/outer order with the surfaces the fit will actually
+        // use, not the raw alignment constants: for a module repaired by the
+        // garbage-alignment guard the two can disagree, and the stored
+        // constants can even put the faces on the wrong sides of each other
+        // (TID 402666798 sits 5.4 mm out of its module plane, more than the
+        // face separation), which would emit the two placeholder hits in an
+        // order the forward-only propagation cannot traverse
+        const auto &stereopos = surfacemapD_.at(detglued->stereoDet()->geographicalId()).position();
+        const auto &monopos = surfacemapD_.at(detglued->monoDet()->geographicalId()).position();
+
         const Eigen::Vector3d stereoposv(stereopos.x(), stereopos.y(), stereopos.z());
         const Eigen::Vector3d monoposv(monopos.x(), monopos.y(), monopos.z());
         const Eigen::Vector3d trackmomv(track.momentum().x(), track.momentum().y(), track.momentum().z());
-        
+
         bool order = (stereoposv - monoposv).dot(trackmomv) > 0.;
-        
+
 
         const GeomDetUnit* detinner = order ? detglued->monoDet() : detglued->stereoDet();
         const GeomDetUnit* detouter = order ? detglued->stereoDet() : detglued->monoDet();
@@ -615,7 +622,7 @@ void ResidualGlobalCorrectionMakerG4e::produce(edm::Event &iEvent, const edm::Ev
         
         hits.push_back(TrackingRecHit::RecHitPointer(new InvalidTrackingRecHit(*detinner, (*it)->type())));
         hits.push_back(TrackingRecHit::RecHitPointer(new InvalidTrackingRecHit(*detouter, (*it)->type())));
-        
+
       }
       else {
         // apply hit quality criteria
@@ -1321,6 +1328,16 @@ void ResidualGlobalCorrectionMakerG4e::produce(edm::Event &iEvent, const edm::Ev
 
         if (!std::get<0>(propresult)) {
           std::cout << "Abort: Propagation Failed!" << std::endl;
+          {
+            const DetId fdet = hit->geographicalId();
+            std::cout << "CVHDIAG reason=PROP ihit=" << ihit << " nhit=" << hits.size()
+                      << " detid=" << fdet.rawId() << " subdet=" << fdet.subdetId()
+                      << " layer=" << trackerTopology->layer(fdet)
+                      << " sx=" << surface.position().x() << " sy=" << surface.position().y()
+                      << " sz=" << surface.position().z()
+                      << " trkpt=" << trackPt << " trketa=" << trackEta << " trkphi=" << trackPhi
+                      << " iiter=" << iiter << std::endl;
+          }
           valid = false;
           break;
         }
@@ -1595,6 +1612,14 @@ void ResidualGlobalCorrectionMakerG4e::produce(edm::Event &iEvent, const edm::Ev
           auto const& preciseHit = cloner.makeShared(hit, tsostmp);
           if (!preciseHit->isValid()) {
             std::cout << "Abort: Failed updating hit" << std::endl;
+            {
+              const DetId fdet = hit->geographicalId();
+              std::cout << "CVHDIAG reason=HITUPD ihit=" << ihit << " nhit=" << hits.size()
+                        << " detid=" << fdet.rawId() << " subdet=" << fdet.subdetId()
+                        << " layer=" << trackerTopology->layer(fdet)
+                        << " trkpt=" << trackPt << " trketa=" << trackEta << " trkphi=" << trackPhi
+                        << " iiter=" << iiter << std::endl;
+            }
             valid = false;
             break;
           }
@@ -2356,6 +2381,10 @@ void ResidualGlobalCorrectionMakerG4e::produce(edm::Event &iEvent, const edm::Ev
       
       if (std::isnan(edmval) || std::isinf(edmval)) {
         std::cout << "WARNING: invalid parameter update!!!" << " edmval = " << edmval << " lamupd = " << lamupd << " deltachisqval = " << deltachisqval << std::endl;
+        std::cout << "CVHDIAG reason=PARUPD ihit=-1 nhit=" << nValidHits
+                  << " detid=0 subdet=-1 layer=-1"
+                  << " trkpt=" << trackPt << " trketa=" << trackEta << " trkphi=" << trackPhi
+                  << " iiter=" << iiter << " edmval=" << edmval << " lamupd=" << lamupd << std::endl;
         valid = false;
         break;
       }

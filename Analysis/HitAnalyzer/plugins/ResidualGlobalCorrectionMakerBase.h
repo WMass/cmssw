@@ -3,6 +3,7 @@
 
 
 #include <memory>
+#include <unordered_set>
 
 // user include files
 #include "FWCore/Framework/interface/Frameworkfwd.h"
@@ -431,7 +432,9 @@ protected:
   bool fillJac_;
   bool fillRunTree_;
   bool alignGlued_ = true;
-  
+  double gluedGarbageTiltThreshold_ = 0.05;
+  double moduleGarbageShiftThreshold_ = 0.4;
+
   bool debugprintout_;
   
   bool doGen_;

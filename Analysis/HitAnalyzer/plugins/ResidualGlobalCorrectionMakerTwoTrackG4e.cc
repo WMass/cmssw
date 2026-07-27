@@ -662,9 +662,12 @@ void ResidualGlobalCorrectionMakerTwoTrackG4e::produce(edm::Event &iEvent, const
           if (detglued != nullptr && !(*it)->isValid()) {
 //             bool order = detglued->stereoDet()->surface().position().mag() > detglued->monoDet()->surface().position().mag();
             
-            const auto stereopos = detglued->stereoDet()->surface().position();
-            const auto monopos = detglued->monoDet()->surface().position();
-            
+            // inner/outer order from the surfaces the fit will use, not from
+            // the raw alignment constants -- see the same block in
+            // ResidualGlobalCorrectionMakerG4e
+            const auto &stereopos = surfacemapD_.at(detglued->stereoDet()->geographicalId()).position();
+            const auto &monopos = surfacemapD_.at(detglued->monoDet()->geographicalId()).position();
+
             const Eigen::Vector3d stereoposv(stereopos.x(), stereopos.y(), stereopos.z());
             const Eigen::Vector3d monoposv(monopos.x(), monopos.y(), monopos.z());
             const Eigen::Vector3d trackmomv(track.momentum().x(), track.momentum().y(), track.momentum().z());
@@ -732,10 +735,10 @@ void ResidualGlobalCorrectionMakerTwoTrackG4e::produce(edm::Event &iEvent, const
             else {
               hits.push_back(TrackingRecHit::RecHitPointer(new InvalidTrackingRecHit(*detectorG, TrackingRecHit::inactive)));
             }
-          }          
+          }
         }
       }
-      
+
       unsigned int nhits = 0;
       unsigned int nvalid = 0;
       unsigned int nvalidpixel = 0;
