@@ -93,6 +93,7 @@ public:
                   << " (" << (100. * pixHitsDemoted_ / pixHitsSeen_) << "%)"
                   << "  keepPixelEdgeHits=" << keepPixelEdgeHits_
                   << "  pixelMinSizeX=" << pixelMinSizeX_
+                  << "  pixelMinSizeY=" << pixelMinSizeY_
                   << std::endl;
       }
     }
@@ -1370,7 +1371,8 @@ void ResidualGlobalCorrectionMakerTwoTrackG4e::produce(edm::Event &iEvent, const
                 if (cluster.sizeX() <= 1) ++pixHitsSizeX1_;
                 // Boundary veto configurable via keepPixelEdgeHits; sizeX
                 // threshold configurable via pixelMinSizeX (default 2 = legacy).
-                hitquality = (keepPixelEdgeHits_ || !onEdge) && cluster.sizeX() >= pixelMinSizeX_;
+                hitquality = (keepPixelEdgeHits_ || !onEdge) && cluster.sizeX() >= pixelMinSizeX_
+                          && cluster.sizeY() >= pixelMinSizeY_;
                 if (!hitquality) ++pixHitsDemoted_;
 // hitquality = !pixhit->isOnEdge() && cluster.sizeX() > 1 && pixhit->qBin() < 2;
 // hitquality = !pixhit->isOnEdge() && cluster.sizeX() > 1 && cluster.sizeY() > 1;
@@ -2163,6 +2165,10 @@ void ResidualGlobalCorrectionMakerTwoTrackG4e::produce(edm::Event &iEvent, const
                   msmoliv.push_back(ms.beta);
                   msmoliv.push_back(ms.thp2);
                   msmoliv.push_back(ms.dOverX0);
+                  // per-element Moliere sums (2026-08-08): effZ/effA are mass
+                  // averages and both parameters are non-linear in Z
+                  msmoliv.push_back(ms.zzp1OverA);
+                  msmoliv.push_back(ms.lnScreenW);
                   msmoliv.push_back(ms.stepGroup);
                 }
                 for (auto const &us : g4prop->ioniStepLog()) {
