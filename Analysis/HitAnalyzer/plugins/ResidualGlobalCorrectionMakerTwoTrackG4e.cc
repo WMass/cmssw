@@ -28,10 +28,12 @@
 #include "DataFormats/Common/interface/ValueMap.h"
 #include "DataFormats/Candidate/interface/VertexCompositeCandidate.h"
 #include "DataFormats/RecoCandidate/interface/RecoChargedCandidate.h"
+#include "Geometry/CommonTopologies/interface/PixelTopology.h"
 
 #include "Math/Vector4Dfwd.h"
 
 #include "TrackPropagation/Geant4e/interface/Geant4ePropagator.h"
+#include "TrackPropagation/Geant4e/interface/G4UniversalFluctuationForExtrapolator.hh"
 
 #include "FWCore/Common/interface/TriggerNames.h"
 #include "DataFormats/L1GlobalTrigger/interface/L1GlobalTriggerReadoutRecord.h"
@@ -42,6 +44,37 @@
 #include <iostream>
 #include <limits>
 #include <sstream>
+
+namespace {
+
+// Generic VertexCompositeCandidate decomposition.
+//
+// The candidate tree already encodes the fit structure, so no per-channel
+// adapter is needed: a LEAF daughter (RecoChargedCandidate) is a single track,
+// a COMPOSITE daughter is a two-track joint-fit subsystem. These two helpers
+// are the whole of that rule.
+
+// The track behind a leaf daughter, or nullptr if the node is not a leaf
+// charged candidate (i.e. it is composite) or carries a null TrackRef.
+const reco::Track* leafTrack(const reco::Candidate* c) {
+  const auto* rcc = dynamic_cast<const reco::RecoChargedCandidate*>(c);
+  if (!rcc || rcc->track().isNull()) return nullptr;
+  return &*rcc->track();
+}
+
+// The two leaf tracks of a node's first two daughters. Fails (returns false,
+// leaving `out` untouched) when the node has fewer than two daughters or when
+// either of them is composite / trackless.
+bool subsystemPair(const reco::Candidate* c, std::array<const reco::Track*, 2>& out) {
+  if (!c || c->numberOfDaughters() < 2) return false;
+  const reco::Track* t0 = leafTrack(c->daughter(0));
+  const reco::Track* t1 = leafTrack(c->daughter(1));
+  if (!t0 || !t1) return false;
+  out = {{t0, t1}};
+  return true;
+}
+
+}  // namespace
 
 
 class ResidualGlobalCorrectionMakerTwoTrackG4e : public ResidualGlobalCorrectionMakerBase
@@ -95,6 +128,26 @@ public:
                   << "  pixelMinSizeX=" << pixelMinSizeX_
                   << "  pixelMinSizeY=" << pixelMinSizeY_
                   << std::endl;
+        // Pathology-class combination table (only non-empty bins). Class 0
+        // is the healthy bulk; every other combination is a candidate for a
+        // dedicated local-x/local-y correction parameter.
+        for (unsigned int isub = 0; isub < 2; ++isub) {
+          for (unsigned int icls = 0; icls < 16; ++icls) {
+            const unsigned long long n = pixHitsClass_[isub][icls];
+            if (n == 0ULL) continue;
+            std::string label;
+            if (icls & 1) label += "|edgeX";
+            if (icls & 2) label += "|edgeY";
+            if (icls & 4) label += "|sizeX1";
+            if (icls & 8) label += "|sizeY1";
+            if (label.empty()) label = "|clean";
+            std::cout << "pixHitClass " << (isub == 0 ? "BPix" : "FPix")
+                      << " " << label.substr(1)
+                      << "  n=" << n
+                      << " (" << (100. * n / pixHitsSeen_) << "%)"
+                      << std::endl;
+          }
+        }
       }
     }
   }
@@ -166,6 +219,21 @@ private:
   unsigned int maxBacktracks_ = 4;
   unsigned int maxSeedInflations_ = 2;
 
+  // Which two-track subsystem of each srcCandidates entry this instance fits.
+  //
+  // A VertexCompositeCandidate decomposes generically: a COMPOSITE daughter is
+  // a joint-fit two-track subsystem (J/psi, K*0, phi, Ks, Lambda, pipi, D0), a
+  // LEAF RecoChargedCandidate daughter is a single track (handled by the
+  // single-track maker). This index selects which daughter to descend into, so
+  // channels with two composite daughters (e.g. B0 -> J/psi K*0) are served by
+  // two instances of this module rather than a per-channel splitter.
+  //
+  //   -1 (default) : legacy/auto -- fit the candidate directly when its first
+  //                  two daughters are leaves, otherwise descend into
+  //                  daughter(0). Keeps every existing driver bit-identical.
+  //   >= 0         : descend into that daughter index and fit its two leaves.
+  int subsystemDaughter_ = -1;
+
   // Optional per-candidate EDM ValueMap output for the NanoAOD path, keyed to
   // the srcCandidates collection. Off by default so the ALCARECO TTree drivers
   // are unaffected. Kinematics are emitted whenever produceValueMaps_ is set;
@@ -193,6 +261,30 @@ private:
   mutable unsigned long long pixHitsEdge_ = 0ULL;       // cluster on the sensor boundary (isOnEdge)
   mutable unsigned long long pixHitsSizeX1_ = 0ULL;     // cluster sizeX == 1
   mutable unsigned long long pixHitsDemoted_ = 0ULL;    // demoted to inactive by the quality cut
+  // Pathology-class table: bit0 = edge in local x (cluster touches a
+  // sensor-boundary row), bit1 = edge in local y (boundary column),
+  // bit2 = sizeX == 1 (single row -> x from one pixel), bit3 = sizeY == 1
+  // (single column -> y from one pixel). Outer index 0 = BPix, 1 = FPix.
+  mutable std::array<std::array<unsigned long long, 16>, 2> pixHitsClass_ {{{{0ULL}}, {{0ULL}}}};
+
+  // Per-hit pixel diagnostics (gated by fillHitDiagnostics): last-iteration
+  // local residuals dy0 + side-resolved pathology class of every valid
+  // pixel hit on the two tracks. Class bits: 0=edge at -x boundary,
+  // 1=edge at +x, 2=edge at -y, 3=edge at +y, 4=sizeX==1, 5=sizeY==1.
+  bool fillHitDiagnostics_ = false;
+  // Deweight pathological pixel hits (any class bit set) by scaling their
+  // Vinv with 1e-6: the hit keeps its surface and trajectory state but
+  // exerts no pull, so its dy0 is an (almost) unbiased residual w.r.t.
+  // the surrounding fit -- the measurement mode for the per-side bias
+  // attribution study.
+  bool deweightPathoHits_ = false;
+  std::vector<unsigned int> hitdiag_detid;
+  std::vector<int> hitdiag_trk;     // 0/1 = position in the track pair
+  std::vector<int> hitdiag_charge;  // charge of the track the hit is on
+  std::vector<int> hitdiag_class;
+  std::vector<float> hitdiag_dx, hitdiag_dy;    // dy0: hit - predicted, local x/y
+  std::vector<float> hitdiag_exx, hitdiag_eyy;  // CPE local position variance
+  std::vector<float> hitdiag_lx, hitdiag_ly;    // (deformation-corrected) hit local pos
   bool         debugPerIterDump_;   // emit per-iter vector branches when true
 
   // Per-iteration debug vectors (filled only when debugPerIterDump_=true).
@@ -339,6 +431,28 @@ private:
   unsigned int Muminus_nvalidFinal;
   unsigned int Muminus_nvalidpixelFinal;
 
+  // TRANSMISSION PROBE (2026-08-13). Total MEAN energy loss that the fit's
+  // reference trajectory actually applies between the reference point and the
+  // outermost hit, summed over propagation steps of the LAST iteration of the
+  // UNCONSTRAINED (icons==0) pass, in GeV. This is the denominator of the
+  // "systematic transmission"
+  //     T_sys = d(p_fit at reference) / d(assumed total energy loss)
+  // measured by re-running with CVH_DEDX_SCALE != 1 and pairing per track.
+  // It is the model's assumed loss, NOT the true (sim) loss: it is exactly
+  // the quantity the coherent dE/dx re-centring moves.
+  float Muplus_dEref;
+  float Muminus_dEref;
+
+  // Per-muon pixel pathology-class counts of the hits USED in the fit
+  // (16 combination bins, bit0=edgeX bit1=edgeY bit2=sizeX1 bit3=sizeY1;
+  // bin 0 = clean), plus the count of demoted-to-inactive pixel hits.
+  // Lets the analysis bin candidates by pathology content when the
+  // veto is relaxed (keepPixelEdgeHits / pixelMinSizeX).
+  std::vector<int> Muplus_pixClass;
+  std::vector<int> Muminus_pixClass;
+  unsigned int Muplus_npixDemoted;
+  unsigned int Muminus_npixDemoted;
+
   bool Muplus_highpurity;
   bool Muminus_highpurity;
 
@@ -454,6 +568,17 @@ ResidualGlobalCorrectionMakerTwoTrackG4e::ResidualGlobalCorrectionMakerTwoTrackG
       ? iConfig.getParameter<unsigned int>("maxBacktracks") : 4u;
   maxSeedInflations_ = iConfig.existsAs<unsigned int>("maxSeedInflations")
       ? iConfig.getParameter<unsigned int>("maxSeedInflations") : 2u;
+
+  // Which two-track subsystem of each candidate to fit (see member comment).
+  // Default -1 keeps the legacy flat-candidate behaviour.
+  subsystemDaughter_ = iConfig.existsAs<int>("subsystemDaughter")
+      ? iConfig.getParameter<int>("subsystemDaughter") : -1;
+  
+  // Pixel-pathology bias attribution (see member docs above).
+  fillHitDiagnostics_ = iConfig.existsAs<bool>("fillHitDiagnostics")
+      ? iConfig.getParameter<bool>("fillHitDiagnostics") : false;
+  deweightPathoHits_ = iConfig.existsAs<bool>("deweightPathoHits")
+      ? iConfig.getParameter<bool>("deweightPathoHits") : false;
 
   // NanoAOD path: emit per-candidate ValueMaps keyed to srcCandidates. Only
   // meaningful in the candidate-driven mode. Kinematics always; the global-fit
@@ -730,6 +855,29 @@ void ResidualGlobalCorrectionMakerTwoTrackG4e::beginStream(edm::StreamID streami
     tree->Branch("Muminus_nvalidpixelFinal", &Muminus_nvalidpixelFinal);
     tree->Branch("Muminus_nmatchedvalid", &Muminus_nmatchedvalid);
     tree->Branch("Muminus_nambiguousmatchedvalid", &Muminus_nambiguousmatchedvalid);
+
+    // transmission probe: assumed total mean eloss along the reference
+    // trajectory (GeV), icons==0, last iteration. See member declaration.
+    tree->Branch("Muplus_dEref", &Muplus_dEref);
+    tree->Branch("Muminus_dEref", &Muminus_dEref);
+
+    tree->Branch("Muplus_pixClass", &Muplus_pixClass);
+    tree->Branch("Muminus_pixClass", &Muminus_pixClass);
+    tree->Branch("Muplus_npixDemoted", &Muplus_npixDemoted);
+    tree->Branch("Muminus_npixDemoted", &Muminus_npixDemoted);
+
+    if (fillHitDiagnostics_) {
+      tree->Branch("hitdiag_detid", &hitdiag_detid);
+      tree->Branch("hitdiag_trk", &hitdiag_trk);
+      tree->Branch("hitdiag_charge", &hitdiag_charge);
+      tree->Branch("hitdiag_class", &hitdiag_class);
+      tree->Branch("hitdiag_dx", &hitdiag_dx);
+      tree->Branch("hitdiag_dy", &hitdiag_dy);
+      tree->Branch("hitdiag_exx", &hitdiag_exx);
+      tree->Branch("hitdiag_eyy", &hitdiag_eyy);
+      tree->Branch("hitdiag_lx", &hitdiag_lx);
+      tree->Branch("hitdiag_ly", &hitdiag_ly);
+    }
 
     tree->Branch("Muplus_highpurity", &Muplus_highpurity);
     tree->Branch("Muminus_highpurity", &Muminus_highpurity);
@@ -1176,10 +1324,26 @@ void ResidualGlobalCorrectionMakerTwoTrackG4e::produce(edm::Event &iEvent, const
     for (std::size_t ic = 0; ic < candH->size(); ++ic) {
       const auto& cand = (*candH)[ic];
       if (cand.numberOfDaughters() < 2) continue;
-      const auto* d0 = dynamic_cast<const reco::RecoChargedCandidate*>(cand.daughter(0));
-      const auto* d1 = dynamic_cast<const reco::RecoChargedCandidate*>(cand.daughter(1));
-      if (!d0 || !d1 || d0->track().isNull() || d1->track().isNull()) continue;
-      trackPairs.push_back({{&*d0->track(), &*d1->track()}});
+
+      // Resolve this instance's two-track subsystem from the candidate tree.
+      std::array<const reco::Track*, 2> pair{{nullptr, nullptr}};
+      bool ok = false;
+      if (subsystemDaughter_ >= 0) {
+        // Explicit selection: descend into the named composite daughter. Used
+        // to give a second instance the X subsystem of a J/psi + X candidate.
+        if (subsystemDaughter_ < static_cast<int>(cand.numberOfDaughters()))
+          ok = subsystemPair(cand.daughter(subsystemDaughter_), pair);
+      } else {
+        // Auto: a flat candidate (both daughters leaves) is fit directly --
+        // this is the legacy path and stays bit-identical. Otherwise the
+        // candidate is nested (e.g. B+ -> [J/psi] K+), so descend into
+        // daughter(0), which the stage-1 layout fixes as the composite.
+        ok = subsystemPair(&cand, pair);
+        if (!ok) ok = subsystemPair(cand.daughter(0), pair);
+      }
+      if (!ok) continue;
+
+      trackPairs.push_back(pair);
       bCandIdxPerPair.push_back(
           (bCandIdxH.isValid() && ic < bCandIdxH->size()) ? (*bCandIdxH)[ic] : -1);
       candCollIdxPerPair.push_back(static_cast<int>(ic));
@@ -1324,7 +1488,12 @@ void ResidualGlobalCorrectionMakerTwoTrackG4e::produce(edm::Event &iEvent, const
 // std::cout << "massconstraintval = " << massconstraintval << std::endl;
     
       std::array<TransientTrackingRecHit::RecHitContainer, 2> hitsarr;
-      
+
+      // Per-muon pathology-class counts of pixel hits admitted to the fit
+      // (16 combination bins, see Mu{plus,minus}_pixClass) + demoted count.
+      std::array<std::array<int, 16>, 2> pixclassarr = {{{{0}}, {{0}}}};
+      std::array<unsigned int, 2> npixdemotedarr = {{0u, 0u}};
+
       // prepare hits
       for (unsigned int id = 0; id < 2; ++id) {
         const reco::Track &track = id == 0 ? *itrack : *jtrack;
@@ -1340,6 +1509,13 @@ void ResidualGlobalCorrectionMakerTwoTrackG4e::produce(edm::Event &iEvent, const
           // Leg-structure-free mode: drop hitless surfaces (see the
           // single-track maker for the rationale).
           if (skipHitlessSurfaces_ && !(*it)->isValid()) {
+            continue;
+          }
+
+          // hits on garbage-shifted modules: dropped (drop policy) or
+          // re-inserted at the repaired-surface path position (reorder
+          // policy); see the single-track producer for the rationale
+          if (!garbageShiftReorderHits_ && garbageShiftModules_.count((*it)->geographicalId().rawId())) {
             continue;
           }
 
@@ -1362,8 +1538,12 @@ void ResidualGlobalCorrectionMakerTwoTrackG4e::produce(edm::Event &iEvent, const
             const GeomDetUnit* detinner = order ? detglued->monoDet() : detglued->stereoDet();
             const GeomDetUnit* detouter = order ? detglued->stereoDet() : detglued->monoDet();
             
-            hits.push_back(TrackingRecHit::RecHitPointer(new InvalidTrackingRecHit(*detinner, (*it)->type())));
-            hits.push_back(TrackingRecHit::RecHitPointer(new InvalidTrackingRecHit(*detouter, (*it)->type())));
+            if (garbageShiftReorderHits_ || !garbageShiftModules_.count(detinner->geographicalId().rawId())) {
+              hits.push_back(TrackingRecHit::RecHitPointer(new InvalidTrackingRecHit(*detinner, (*it)->type())));
+            }
+            if (garbageShiftReorderHits_ || !garbageShiftModules_.count(detouter->geographicalId().rawId())) {
+              hits.push_back(TrackingRecHit::RecHitPointer(new InvalidTrackingRecHit(*detouter, (*it)->type())));
+            }
           }
           else {
             // apply hit quality criteria
@@ -1390,11 +1570,31 @@ void ResidualGlobalCorrectionMakerTwoTrackG4e::produce(edm::Event &iEvent, const
                 const bool onEdge = pixhit->isOnEdge();
                 if (onEdge) ++pixHitsEdge_;
                 if (cluster.sizeX() <= 1) ++pixHitsSizeX1_;
+                // Direction-resolved pathology classes: the CPE edge flag
+                // does not say WHICH boundary is touched, but the bias is
+                // along the truncated coordinate, so resolve it from the
+                // cluster extent vs the sensor edge rows/columns.
+                const PixelTopology* pixtopo =
+                    dynamic_cast<const PixelTopology*>(&detectorG->topology());
+                assert(pixtopo != nullptr);
+                const bool edgeX = pixtopo->isItEdgePixelInX(cluster.minPixelRow()) ||
+                                   pixtopo->isItEdgePixelInX(cluster.maxPixelRow());
+                const bool edgeY = pixtopo->isItEdgePixelInY(cluster.minPixelCol()) ||
+                                   pixtopo->isItEdgePixelInY(cluster.maxPixelCol());
+                const unsigned int icls = (edgeX ? 1u : 0u) |
+                                          (edgeY ? 2u : 0u) |
+                                          (cluster.sizeX() <= 1 ? 4u : 0u) |
+                                          (cluster.sizeY() <= 1 ? 8u : 0u);
+                const unsigned int isub =
+                    GeomDetEnumerators::isBarrel(detectorG->subDetector()) ? 0 : 1;
+                ++pixHitsClass_[isub][icls];
                 // Boundary veto configurable via keepPixelEdgeHits; sizeX
                 // threshold configurable via pixelMinSizeX (default 2 = legacy).
                 hitquality = (keepPixelEdgeHits_ || !onEdge) && cluster.sizeX() >= pixelMinSizeX_
                           && cluster.sizeY() >= pixelMinSizeY_;
                 if (!hitquality) ++pixHitsDemoted_;
+                if (hitquality) ++pixclassarr[id][icls];
+                else ++npixdemotedarr[id];
 // hitquality = !pixhit->isOnEdge() && cluster.sizeX() > 1 && pixhit->qBin() < 2;
 // hitquality = !pixhit->isOnEdge() && cluster.sizeX() > 1 && cluster.sizeY() > 1;
               }
@@ -1428,14 +1628,22 @@ void ResidualGlobalCorrectionMakerTwoTrackG4e::produce(edm::Event &iEvent, const
             else if (!skipHitlessSurfaces_) {
               hits.push_back(TrackingRecHit::RecHitPointer(new InvalidTrackingRecHit(*detectorG, TrackingRecHit::inactive)));
             }
-          }          
+          }
+        }
+        if (garbageShiftReorderHits_ && !garbageShiftModules_.empty()) {
+          reorderGarbageShiftHits(hits, track.momentum());
         }
       }
-      
+
       unsigned int nhits = 0;
       unsigned int nvalid = 0;
       unsigned int nvalidpixel = 0;
       unsigned int nvalidalign2d = 0;
+      // Extra alignment-block columns from the pixel pathological-hit
+      // class corrections (parmtypes 16-21): 2 per edge-x hit (mean+diff),
+      // 2 per edge-y, 1 per sizeX1, 1 per sizeY1. Counted here so the
+      // fillAlignGrads appends match nparsAlignment exactly.
+      unsigned int nparsPixClass = 0;
       
       
       std::array<unsigned int, 2> nhitsarr = {{ 0, 0 }};
@@ -1450,6 +1658,11 @@ void ResidualGlobalCorrectionMakerTwoTrackG4e::produce(edm::Event &iEvent, const
       std::array<unsigned int, 2> nvalidpixelFinalarr = {{ 0, 0 }};
       std::array<unsigned int, 2> nmatchedvalidarr = {{ 0, 0 }};
       std::array<unsigned int, 2> nambiguousmatchedvalidarr = {{ 0, 0 }};
+
+      // transmission probe: per-leg sum of the propagator's applied mean
+      // energy loss (GeV). Reset per leg at the top of each iteration's hit
+      // loop, so after the loop it holds the last (converged) iteration.
+      std::array<double, 2> dErefarr = {{ 0., 0. }};
       
       const std::array<bool, 2> highpurityarr = {{ itrack->quality(reco::TrackBase::highPurity),
                                                   jtrack->quality(reco::TrackBase::highPurity) }};
@@ -1477,6 +1690,28 @@ void ResidualGlobalCorrectionMakerTwoTrackG4e::produce(edm::Event &iEvent, const
             if (ispixel) {
               ++nvalidpixel;
               ++nvalidpixelarr[id];
+              if (pixelHitClassCorrections_) {
+                const TrackerSingleRecHit* tkhit = dynamic_cast<const TrackerSingleRecHit*>(&*hit);
+                const PixelTopology* pixtopo =
+                    dynamic_cast<const PixelTopology*>(&hit->det()->topology());
+                if (tkhit != nullptr && pixtopo != nullptr && tkhit->cluster_pixel().isNonnull()) {
+                  const SiPixelCluster& cl = *tkhit->cluster_pixel();
+                  const bool edgeX = cl.minPixelRow() == 0 ||
+                                     cl.maxPixelRow() == pixtopo->nrows() - 1;
+                  const bool edgeY = cl.minPixelCol() == 0 ||
+                                     cl.maxPixelCol() == pixtopo->ncolumns() - 1;
+                  if (pixelLorentzParam_) {
+                    // dtanLA column on every valid pixel hit + the
+                    // remaining empirical columns (17 edge-x-diff,
+                    // 18/19 edge-y, 21 sizeY1); 16/20 replaced.
+                    nparsPixClass += 1u + (edgeX ? 1u : 0u) + (edgeY ? 2u : 0u) +
+                                     (cl.sizeY() <= 1 ? 1u : 0u);
+                  } else {
+                    nparsPixClass += (edgeX ? 2u : 0u) + (edgeY ? 2u : 0u) +
+                                     (cl.sizeX() <= 1 ? 1u : 0u) + (cl.sizeY() <= 1 ? 1u : 0u);
+                  }
+                }
+              }
             }
             
             
@@ -1571,7 +1806,7 @@ void ResidualGlobalCorrectionMakerTwoTrackG4e::produce(edm::Event &iEvent, const
       
 // const unsigned int nparsAlignment = 2*nvalid + nvalidalign2d;
 // const unsigned int nparsAlignment = 6*nvalid;
-      const unsigned int nparsAlignment = 5*nvalid + nvalidalign2d;
+      const unsigned int nparsAlignment = 5*nvalid + nvalidalign2d + nparsPixClass;
       const unsigned int nFieldModes = fieldCorrection_->nModes();
       const unsigned int nparsBfield = nhits * nFieldModes;
       // Global material model: one slot per group per hit (uncrossed groups
@@ -1860,6 +2095,22 @@ void ResidualGlobalCorrectionMakerTwoTrackG4e::produce(edm::Event &iEvent, const
             msmoliv.clear();
           }
 
+          // Per-hit diagnostics: cleared every iteration so the vectors
+          // hold the LAST iteration's residuals when the tree row is
+          // written for this candidate.
+          if (fillHitDiagnostics_) {
+            hitdiag_detid.clear();
+            hitdiag_trk.clear();
+            hitdiag_charge.clear();
+            hitdiag_class.clear();
+            hitdiag_dx.clear();
+            hitdiag_dy.clear();
+            hitdiag_exx.clear();
+            hitdiag_eyy.clear();
+            hitdiag_lx.clear();
+            hitdiag_ly.clear();
+          }
+
           // Running constraint-row cursor (single-track maker calls this
           // `icons`; renamed `irow` here because `icons` is the outer
           // constrained/unconstrained pass index in this two-track maker).
@@ -1930,8 +2181,14 @@ void ResidualGlobalCorrectionMakerTwoTrackG4e::produce(edm::Event &iEvent, const
             const unsigned int tracknhits = hits.size();
 
             Matrix<double, 7, 1> updtsos = refFts;
-            
-            
+
+            // transmission probe: restart the assumed-eloss accumulator for
+            // this leg on every iteration (and on every backtrack retry,
+            // which re-enters here), so the value surviving the loop belongs
+            // to the converged reference trajectory.
+            dErefarr[id] = 0.;
+
+
             if (bsConstraint_) {
               // apply beamspot constraint
               // TODO add residual corrections for beamspot parameters?
@@ -2160,6 +2417,21 @@ void ResidualGlobalCorrectionMakerTwoTrackG4e::produce(edm::Event &iEvent, const
 
 
               updtsos = std::get<1>(propresult);
+
+              // transmission probe: accumulate the mean energy loss this
+              // propagation step actually applied. Taken from the propagator
+              // input/output states rather than from any dE/dx model call, so
+              // it stays correct whatever scales the loss (CVH_DEDX_SCALE,
+              // the global material model's k_g, the per-module dxi). The
+              // difference is formed BEFORE any local state update below, so
+              // only the propagation (not the fit) contributes.
+              {
+                const double m2 = trackMass[id] * trackMass[id];
+                const double eIn = std::sqrt(propInputState.segment<3>(3).squaredNorm() + m2);
+                const double eOut = std::sqrt(updtsos.segment<3>(3).squaredNorm() + m2);
+                dErefarr[id] += eIn - eOut;
+              }
+
               const Matrix<double, 5, 5> Qcurv = std::get<2>(propresult);
               const Matrix<double, 5, 5> dQMScurv = std::get<5>(propresult);
               const Matrix<double, 5, 5> dQIcurv = std::get<6>(propresult);
@@ -2205,6 +2477,13 @@ void ResidualGlobalCorrectionMakerTwoTrackG4e::produce(edm::Event &iEvent, const
                   ioniurbanv.push_back(us.rec.tmaxr);
                   ioniurbanv.push_back(us.rec.scaling);
                   ioniurbanv.push_back(us.cs);
+                  // regime 2/3 (CVH_IONI_EXACTDELTA): two extra columns AFTER
+                  // cs, so every existing column index is unchanged and the
+                  // stride is 11 exactly when the switch is off.
+                  if (G4UniversalFluctuationForExtrapolator::exactDeltaEnabled()) {
+                    ioniurbanv.push_back(us.rec.beta2);
+                    ioniurbanv.push_back(us.rec.etot);
+                  }
                 }
               }
 
@@ -2614,6 +2893,18 @@ void ResidualGlobalCorrectionMakerTwoTrackG4e::produce(edm::Event &iEvent, const
                   // rotation from module to strip coordinates
                   Matrix2d R;
 
+                  // Side-resolved pathology class of this hit (pixels only;
+                  // stays 0 for strips and clean pixel hits). Bits:
+                  // 0 = -x edge, 1 = +x edge, 2 = -y edge, 3 = +y edge,
+                  // 4 = sizeX==1, 5 = sizeY==1. Used by the hit-diagnostic
+                  // branches, the deweight mode, and the class-correction
+                  // Jacobian columns appended after the alignment block.
+                  // pixclsValid marks that the cluster classification
+                  // succeeded (needed to tell a genuinely clean pixel hit
+                  // from a failed cast, since both leave pixcls == 0).
+                  int pixcls = 0;
+                  bool pixclsValid = false;
+
                   const double lxcor = localparms[3];
                   const double lycor = localparms[4];
 
@@ -2693,6 +2984,88 @@ void ResidualGlobalCorrectionMakerTwoTrackG4e::produce(edm::Event &iEvent, const
                       Vinv = iV.inverse();
 
                       R = Matrix2d::Identity();
+
+                      // Side-resolved pathology classification of this hit
+                      // (see pixcls declaration above for the bit layout).
+                      if (fillHitDiagnostics_ || deweightPathoHits_ ||
+                          pixelHitClassCorrections_) {
+                        const TrackerSingleRecHit* diagtkhit =
+                            dynamic_cast<const TrackerSingleRecHit*>(&*preciseHit);
+                        const PixelTopology* diagtopo =
+                            dynamic_cast<const PixelTopology*>(&topology);
+                        if (diagtkhit != nullptr && diagtopo != nullptr &&
+                            diagtkhit->cluster_pixel().isNonnull()) {
+                          const SiPixelCluster& cl = *diagtkhit->cluster_pixel();
+                          if (cl.minPixelRow() == 0) pixcls |= 1 << 0;
+                          if (cl.maxPixelRow() == diagtopo->nrows() - 1) pixcls |= 1 << 1;
+                          if (cl.minPixelCol() == 0) pixcls |= 1 << 2;
+                          if (cl.maxPixelCol() == diagtopo->ncolumns() - 1) pixcls |= 1 << 3;
+                          if (cl.sizeX() <= 1) pixcls |= 1 << 4;
+                          if (cl.sizeY() <= 1) pixcls |= 1 << 5;
+                          pixclsValid = true;
+                        }
+                        // Any set bit = pathological: remove the pull but
+                        // keep the surface/state so dy0 stays defined.
+                        if (deweightPathoHits_ && pixcls != 0) {
+                          Vinv *= 1e-6;
+                        }
+                        // dtanLA response weight of this hit (physics mode):
+                        // size-1 = 1, x-edge = lorentzWedge, regular = wclean.
+                        const double lorentzW = (pixcls & 0x10) ? lorentzWsize1_
+                            : ((pixcls & 0x3) ? lorentzWedge_ : lorentzWclean_);
+                        const double lorentzScale = pixclsValid
+                            ? 0.5 * preciseHit->det()->surface().bounds().thickness()
+                            : 0.;
+
+                        // Injection test: simulate a true Lorentz-angle
+                        // mismatch by shifting every valid pixel hit's
+                        // local-x with the injected response weights.
+                        if (injectLorentzTan_ != 0. && pixclsValid) {
+                          const double winj = (pixcls & 0x10) ? lorentzWsize1_
+                              : ((pixcls & 0x3) ? lorentzWedge_
+                                 : (injectLorentzWclean_ > -900. ? injectLorentzWclean_
+                                                                 : lorentzWclean_));
+                          dy0[0] += lorentzScale * winj * injectLorentzTan_;
+                        }
+
+                        // Apply the current class-correction values (seeded
+                        // from corFiles) to the residual: dy0 += J*theta
+                        // with the same columns as appended to Jfull below,
+                        // so a fitted theta zeroes the class-param gradients.
+                        if (pixelHitClassCorrections_ &&
+                            (pixcls != 0 || (pixelLorentzParam_ && pixclsValid))) {
+                          const DetId pixdetid = preciseHit->geographicalId();
+                          auto corval = [&](unsigned int pt) {
+                            return corparms_[detidparms.at(std::make_pair(pt, pixdetid))];
+                          };
+                          if (pixelLorentzParam_ && pixclsValid) {
+                            dy0[0] += lorentzScale * lorentzW * corval(22);
+                          }
+                          if (pixcls & 0x3) {
+                            const double s = (pixcls & 0x2) ? 1. : -1.;
+                            if (!pixelLorentzParam_) dy0[0] += corval(16);
+                            dy0[0] += s * corval(17);
+                          }
+                          if (pixcls & 0xc) {
+                            const double s = (pixcls & 0x8) ? 1. : -1.;
+                            dy0[1] += corval(18) + s * corval(19);
+                          }
+                          if ((pixcls & 0x10) && !pixelLorentzParam_) dy0[0] += corval(20);
+                          if (pixcls & 0x20) dy0[1] += corval(21);
+                        }
+                        if (fillHitDiagnostics_) {
+                          hitdiag_detid.push_back(preciseHit->geographicalId().rawId());
+                          hitdiag_trk.push_back(static_cast<int>(id));
+                          hitdiag_charge.push_back(trackPair[id]->charge());
+                          hitdiag_class.push_back(pixcls);
+                          hitdiag_dx.push_back(dy0[0]);
+                          hitdiag_dy.push_back(dy0[1]);
+                          hitdiag_exx.push_back(iV(0, 0));
+                          hitdiag_eyy.push_back(iV(1, 1));
+                          hitdiag_lx.push_back(hitx);
+                          hitdiag_ly.push_back(hity);
+                        }
+                      }
                     }
                     else {
                       // transform to polar coordinates to end the madness
@@ -2879,6 +3252,49 @@ void ResidualGlobalCorrectionMakerTwoTrackG4e::produce(edm::Event &iEvent, const
                     if (alphaidxs[idim]==0) {
                       hitidxv.push_back(xglobalidx);
                     }
+                  }
+
+                  // Pixel pathological-hit class corrections (parmtypes
+                  // 16-21): extra local-translation Jacobian columns gated
+                  // on this hit's class, appended after the standard
+                  // alignment dofs. Column = d(residual)/d(param): (1,0)
+                  // for local-x-type params, (0,1) for local-y-type (same
+                  // sign convention as the parmtype-0/1 columns: Fhit.col =
+                  // -R*A.col with R = identity on pixels), and the diff
+                  // params additionally carry the edge-side sign s (+1 at
+                  // the hi boundary, -1 at lo). Counted in nparsPixClass.
+                  if (pixelHitClassCorrections_ && ispixel &&
+                      (pixcls != 0 || (pixelLorentzParam_ && pixclsValid))) {
+                    const DetId pixdetid = preciseHit->geographicalId();
+                    auto appendClassCol = [&](unsigned int parmtype, int coord, double sign) {
+                      const unsigned int xglobalidx =
+                          detidparms.at(std::make_pair(parmtype, pixdetid));
+                      Jfull(irow - 2 + coord,
+                            nparsBfield + nparsEloss + alignmentparmidx) = sign;
+                      globalidxv[nparsBfield + nparsEloss + alignmentparmidx] = xglobalidx;
+                      alignmentparmidx++;
+                    };
+                    if (pixelLorentzParam_ && pixclsValid) {
+                      // dtanLA column on every valid pixel hit: J =
+                      // (t/2) * w(class) on the local-x residual row.
+                      const double w = (pixcls & 0x10) ? lorentzWsize1_
+                          : ((pixcls & 0x3) ? lorentzWedge_ : lorentzWclean_);
+                      appendClassCol(22, 0,
+                          0.5 * preciseHit->det()->surface().bounds().thickness() * w);
+                    }
+                    if (pixcls & 0x3) {                    // edge in x
+                      const double s = (pixcls & 0x2) ? 1. : -1.;
+                      if (!pixelLorentzParam_) appendClassCol(16, 0, 1.);  // edge-x-mean
+                      appendClassCol(17, 0, s);            // edge-x-diff
+                    }
+                    if (pixcls & 0xc) {                    // edge in y
+                      const double s = (pixcls & 0x8) ? 1. : -1.;
+                      appendClassCol(18, 1, 1.);           // edge-y-mean
+                      appendClassCol(19, 1, s);            // edge-y-diff
+                    }
+                    if ((pixcls & 0x10) && !pixelLorentzParam_)
+                      appendClassCol(20, 0, 1.);           // sizeX1
+                    if (pixcls & 0x20) appendClassCol(21, 1, 1.);   // sizeY1
                   }
                 };
 
@@ -3643,6 +4059,20 @@ void ResidualGlobalCorrectionMakerTwoTrackG4e::produce(edm::Event &iEvent, const
           Muminus_nvalidpixelFinal = nvalidpixelFinalarr[idxminus];
           Muminus_nmatchedvalid = nmatchedvalidarr[idxminus];
           Muminus_nambiguousmatchedvalid = nambiguousmatchedvalidarr[idxminus];
+
+          // transmission probe: the UNCONSTRAINED pass is the one whose
+          // Mu{plus,minus}_pt the dE/dx scan uses, so pin the accumulator to
+          // icons==0 (the mass-constrained pass re-propagates and would
+          // otherwise overwrite it).
+          if (icons == 0) {
+            Muplus_dEref = dErefarr[idxplus];
+            Muminus_dEref = dErefarr[idxminus];
+          }
+
+          Muplus_pixClass.assign(pixclassarr[idxplus].begin(), pixclassarr[idxplus].end());
+          Muminus_pixClass.assign(pixclassarr[idxminus].begin(), pixclassarr[idxminus].end());
+          Muplus_npixDemoted = npixdemotedarr[idxplus];
+          Muminus_npixDemoted = npixdemotedarr[idxminus];
           
           Muplus_highpurity = highpurityarr[idxplus];
           Muminus_highpurity = highpurityarr[idxminus];
@@ -3778,7 +4208,11 @@ void ResidualGlobalCorrectionMakerTwoTrackG4e::produce(edm::Event &iEvent, const
             Jpsigen_y = muplusgen->vy();
             Jpsigen_z = muplusgen->vz();
 
-            genl3d = std::sqrt((muplusgen->vertex() - *genXyz0).mag2());
+            // genParticles:xyz0 (gen PV) is not kept in every ALCARECO
+            // (the B->J/psi+X MC keeps only the recoGenParticles branch);
+            // fall back to the -99 sentinel rather than throwing.
+            genl3d = genXyz0.isValid()
+                ? std::sqrt((muplusgen->vertex() - *genXyz0).mag2()) : -99.;
           }
           else {
             Jpsigen_pt = -99.;
