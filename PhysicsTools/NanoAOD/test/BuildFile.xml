@@ -3,6 +3,7 @@
   <use name="DataFormats/NanoAOD"/>
   <use name="DataFormats/PatCandidates"/>
   <use name="DataFormats/JetReco"/>
+  <use name="rootntuple"/>
   <use name="catch2"/>
 </bin>
 
