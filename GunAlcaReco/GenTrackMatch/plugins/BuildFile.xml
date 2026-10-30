@@ -1,0 +1,12 @@
+<library name="GenMatchedTrackSelector" file="GenMatchedTrackSelectorModule.cc">
+  <use name="FWCore/Framework"/>
+  <use name="FWCore/ParameterSet"/>
+  <use name="FWCore/PluginManager"/>
+  <use name="DataFormats/TrackReco"/>
+  <use name="DataFormats/HepMCCandidate"/>
+  <use name="DataFormats/Common"/>
+  <use name="DataFormats/Math"/>
+  <use name="CommonTools/UtilAlgos"/>
+  <use name="CommonTools/RecoAlgos"/>
+  <flags EDM_PLUGIN="1"/>
+</library>
