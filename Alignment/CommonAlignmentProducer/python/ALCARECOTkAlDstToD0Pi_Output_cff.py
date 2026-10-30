@@ -7,6 +7,7 @@ OutALCARECOTkAlDstToD0Pi_noDrop = cms.PSet(
     ),
     outputCommands = cms.untracked.vstring(
         'keep *_ALCARECOTkAlDstToD0Pi_*_*',
+        'keep *_ALCARECOTkAlDstToD0PiResonances_*_*',            ## D* candidates (K, pi_hard, pi_soft)
         'keep *_ALCARECOTkAlDstToD0PiDeDxHarmonic2_*_*',         ## per-track dE/dx Harmonic2 (strip)
         'keep *_ALCARECOTkAlDstToD0PiDeDxPixelHarmonic2_*_*',    ## per-track dE/dx Harmonic2 (pixel-only)
         'keep *_ALCARECOTkAlDstToD0PiDeDxAllHarmonic2_*_*',      ## per-track dE/dx Harmonic2-truncated (strip+pixel joint)

@@ -64,8 +64,37 @@ ALCARECOTkAlDstToD0PiDeDxAllHarmonic2 = ALCARECOTkAlDstToD0PiDeDxHarmonic2.clone
     sourceValueMap = cms.InputTag('alcaDedxJointEstimator'),
 )
 
+# D* candidate collection emitted alongside the track filter. Uses the same
+# mass windows, Q-value cut, and per-track pt cuts as the internal selector,
+# runs on generalTracks with the highPurity flag enforced.
+# daughter(0) = K, daughter(1) = pi_hard, daughter(2) = pi_soft (D0 mass can
+# be recomputed offline from daughter(0) + daughter(1)).
+ALCARECOTkAlDstToD0PiResonances = cms.EDProducer('ThreeBodyDecayCandidateProducer',
+    src                  = cms.InputTag('generalTracks'),
+    firstDaughterMass    = cms.double(0.493677),
+    secondDaughterMass   = cms.double(0.139570),
+    thirdDaughterMass    = cms.double(0.139570),
+    firstDaughterPdgId   = cms.int32(321),
+    secondDaughterPdgId  = cms.int32(211),
+    thirdDaughterPdgId   = cms.int32(211),
+    motherPdgId          = cms.int32(413),
+    firstDaughterPtMin   = cms.double(1.0),
+    secondDaughterPtMin  = cms.double(1.0),
+    thirdDaughterPtMin   = cms.double(0.35),
+    minIntermediateMass  = cms.double(1.75),
+    maxIntermediateMass  = cms.double(1.98),
+    minMass              = cms.double(1.89),
+    maxMass              = cms.double(2.13),
+    minMassDifference    = cms.double(0.140),
+    maxMassDifference    = cms.double(0.152),
+    charge               = cms.int32(1),
+    useUnsignedCharge    = cms.bool(True),
+    requireHighPurity    = cms.bool(True),
+)
+
 seqALCARECOTkAlDstToD0Pi = cms.Sequence(ALCARECOTkAlDstToD0PiDCSFilter+
                                         ALCARECOTkAlDstToD0Pi+
+                                        ALCARECOTkAlDstToD0PiResonances+
                                         alcaDedxJointEstimator+
                                         ALCARECOTkAlDstToD0PiDeDxHarmonic2+
                                         ALCARECOTkAlDstToD0PiDeDxPixelHarmonic2+

@@ -87,6 +87,32 @@ ALCARECOTkAlJpsiMuMuResonances = cms.EDProducer('VertexCompositeCandidateRemappe
     originalIndexMap   = cms.InputTag('ALCARECOTkAlJpsiMuMu', 'originalIndex'),
 )
 
+# dE/dx value maps projected onto the cloned track collection, mirroring the
+# J/psi+X and V0 stream persist policy.
+from Alignment.CommonAlignmentProducer.alcaDedxJointEstimator_cfi import alcaDedxJointEstimator
+ALCARECOTkAlJpsiMuMuDeDxHarmonic2 = cms.EDProducer('DeDxValueMapProjector',
+    selectedTracks     = cms.InputTag('ALCARECOTkAlJpsiMuMu'),
+    intermediateTracks = cms.InputTag('ALCARECOTkAlJpsiMuMuTracks'),
+    sourceTracks       = cms.InputTag('generalTracks'),
+    sourceValueMap     = cms.InputTag('dedxHarmonic2'),
+    originalIndexMap   = cms.InputTag('ALCARECOTkAlJpsiMuMu', 'originalIndex'),
+)
+ALCARECOTkAlJpsiMuMuDeDxPixelHarmonic2 = ALCARECOTkAlJpsiMuMuDeDxHarmonic2.clone(
+    sourceValueMap = cms.InputTag('dedxPixelHarmonic2'),
+)
+ALCARECOTkAlJpsiMuMuDeDxAllHarmonic2 = ALCARECOTkAlJpsiMuMuDeDxHarmonic2.clone(
+    sourceValueMap = cms.InputTag('alcaDedxJointEstimator'),
+)
+
+# Track -> reco::Muon association keyed on the cloned track collection, valued
+# into the persisted tight muon collection. Same pattern as J/psi+X.
+ALCARECOTkAlJpsiMuMuTrackToMuon = cms.EDProducer('AlignmentTrackToMuonAssociator',
+    selectedTracks     = cms.InputTag('ALCARECOTkAlJpsiMuMu'),
+    intermediateTracks = cms.InputTag('ALCARECOTkAlJpsiMuMuTracks'),
+    originalIndexMap   = cms.InputTag('ALCARECOTkAlJpsiMuMu', 'originalIndex'),
+    muons              = cms.InputTag('ALCARECOTkAlJpsiMuMuGoodMuons'),
+)
+
 seqALCARECOTkAlJpsiMuMu = cms.Sequence(
     ALCARECOTkAlJpsiMuMuHLT +
     ALCARECOTkAlJpsiMuMuDCSFilter +
@@ -94,7 +120,12 @@ seqALCARECOTkAlJpsiMuMu = cms.Sequence(
     ALCARECOTkAlJpsiMuMuCandidates +
     ALCARECOTkAlJpsiMuMuTracks +
     ALCARECOTkAlJpsiMuMu +
-    ALCARECOTkAlJpsiMuMuResonances
+    ALCARECOTkAlJpsiMuMuResonances +
+    ALCARECOTkAlJpsiMuMuTrackToMuon +
+    alcaDedxJointEstimator +
+    ALCARECOTkAlJpsiMuMuDeDxHarmonic2 +
+    ALCARECOTkAlJpsiMuMuDeDxPixelHarmonic2 +
+    ALCARECOTkAlJpsiMuMuDeDxAllHarmonic2
 )
 
 ## customizations for the pp_on_AA eras
