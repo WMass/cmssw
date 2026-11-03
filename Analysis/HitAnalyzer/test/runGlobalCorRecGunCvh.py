@@ -18,6 +18,8 @@ import FWCore.ParameterSet.Config as cms
 from FWCore.ParameterSet.VarParsing import VarParsing
 
 options = VarParsing('analysis')
+# inputFiles is pre-registered by the cmsRun VarParsing engine (flag for input
+# files in cmsRun parlance); do not re-register it.
 options.register(
     'inputDir',
     '',
