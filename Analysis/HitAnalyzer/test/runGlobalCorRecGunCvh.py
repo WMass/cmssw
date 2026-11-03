@@ -18,28 +18,13 @@ import FWCore.ParameterSet.Config as cms
 from FWCore.ParameterSet.VarParsing import VarParsing
 
 options = VarParsing('analysis')
-# inputFiles is pre-registered by the cmsRun VarParsing engine (flag for input
-# files in cmsRun parlance); do not re-register it.
+# inputFiles and maxEvents are both pre-registered by the cmsRun engine.
 options.register(
     'inputDir',
     '',
     VarParsing.multiplicity.singleton,
     VarParsing.varType.string,
     'Directory containing MuKPiGun ALCARECO Root files. Reads accepted only file-system-visible.',
-)
-options.register(
-    'inputFiles',
-    '',
-    VarParsing.multiplicity.list,
-    VarParsing.varType.string,
-    'Specific gun ALCARECO ROOT file, or list of them. If non-empty, takes priority over inputDir.',
-)
-options.register(
-    'maxEvents',
-    -1,
-    VarParsing.multiplicity.singleton,
-    VarParsing.varType.int,
-    'Number of events to process (-1 = all).',
 )
 options.register(
     'isMC',
