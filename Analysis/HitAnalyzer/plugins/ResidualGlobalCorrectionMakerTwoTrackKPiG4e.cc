@@ -687,6 +687,7 @@ private:
   float raw_D0_mass = -99.;
   float raw_Dst_mass = -99.;
   float raw_DeltaM = -99.;
+  int dstarCandidateIndex = -1;
   float Dst_pt = -99.;
   float Dst_eta = -99.;
   float Dst_phi = -99.;
@@ -1048,6 +1049,7 @@ void ResidualGlobalCorrectionMakerTwoTrackKPiG4e::beginStream(edm::StreamID stre
     tree->Branch("raw_D0_mass", &raw_D0_mass);
     tree->Branch("raw_Dst_mass", &raw_Dst_mass);
     tree->Branch("raw_DeltaM", &raw_DeltaM);
+    tree->Branch("dstarCandidateIndex", &dstarCandidateIndex);
     tree->Branch("Dst_pt", &Dst_pt);
     tree->Branch("Dst_eta", &Dst_eta);
     tree->Branch("Dst_phi", &Dst_phi);
@@ -1687,6 +1689,9 @@ void ResidualGlobalCorrectionMakerTwoTrackKPiG4e::produce(edm::Event &iEvent, co
   // loop over combinatorics of track pairs
   for (auto itrack = trackOrigH->begin(); itrack != trackOrigH->end(); ++itrack) {
     const auto itrackIndex = static_cast<unsigned int>(std::distance(trackOrigH->begin(), itrack));
+    dstarCandidateIndex = useOrderedConsecutivePairs && useDstarTriplets_
+                              ? static_cast<int>(itrackIndex / orderedStride)
+                              : -1;
     if (useOrderedConsecutivePairs) {
       if ((itrackIndex % orderedStride) != 0) {
         continue;

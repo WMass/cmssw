@@ -20,6 +20,20 @@ options.register(
     VarParsing.varType.int,
     'Use MC conditions when set to 1.',
 )
+options.register(
+    'noFitMassWindowDiagnostic',
+    0,
+    VarParsing.multiplicity.singleton,
+    VarParsing.varType.int,
+    'Disable transient fitted-mass cuts for a paired transient/CVH diagnostic run.',
+)
+options.register(
+    'matchWideAlcaEnvelopeDiagnostic',
+    0,
+    VarParsing.multiplicity.singleton,
+    VarParsing.varType.int,
+    'Match validator raw mass windows to the widened Run2016G ALCARECO envelope.',
+)
 options.parseArguments()
 
 
@@ -168,6 +182,39 @@ process.globalCorD0 = process.globalCorD0.clone(
     maxPairMass=cms.double(2.05),
     outprefix=cms.untracked.string('globalcor_d0_selected')
 )
+
+if options.noFitMassWindowDiagnostic:
+    # Keep the normal production defaults intact; this path only removes the
+    # fitted-mass sculpting while preserving fit validity and p-value cuts.
+    process.selectedD0Tracks.minD0FitMass = cms.double(-1.0)
+    process.selectedD0Tracks.maxD0FitMass = cms.double(-1.0)
+    process.selectedD0Tracks.minDstFitMass = cms.double(-1.0)
+    process.selectedD0Tracks.maxDstFitMass = cms.double(-1.0)
+    process.selectedD0Tracks.minDstFitDeltaMass = cms.double(-1.0)
+    process.selectedD0Tracks.maxDstFitDeltaMass = cms.double(-1.0)
+    process.selectedD0Tracks.minDeltaMass = cms.double(0.130)
+    process.selectedD0Tracks.maxDeltaMass = cms.double(0.170)
+    process.selectedD0Tracks.applyUniqueSelection = cms.bool(True)
+    process.selectedD0Tracks.writeTree = cms.bool(True)
+
+    process.globalCorD0.respectTrackOrder = cms.bool(True)
+    process.globalCorD0.useDstarTriplets = cms.bool(True)
+    process.globalCorD0.enforceUniqueTracks = cms.bool(True)
+    process.globalCorD0.outprefix = cms.untracked.string('dst_no_fitmass_globalcor')
+    process.TFileService = cms.Service(
+        'TFileService',
+        fileName=cms.string('dst_no_fitmass_cascade.root'),
+    )
+
+if options.matchWideAlcaEnvelopeDiagnostic:
+    if not options.noFitMassWindowDiagnostic:
+        raise RuntimeError('matchWideAlcaEnvelopeDiagnostic requires noFitMassWindowDiagnostic=1')
+    process.selectedD0Tracks.minD0Mass = cms.double(1.70)
+    process.selectedD0Tracks.maxD0Mass = cms.double(2.03)
+    process.selectedD0Tracks.minDstMass = cms.double(1.83)
+    process.selectedD0Tracks.maxDstMass = cms.double(2.22)
+    process.selectedD0Tracks.minDeltaMass = cms.double(0.140)
+    process.selectedD0Tracks.maxDeltaMass = cms.double(0.180)
 
 process.offlineBeamSpot = cms.EDProducer('BeamSpotProducer')
 

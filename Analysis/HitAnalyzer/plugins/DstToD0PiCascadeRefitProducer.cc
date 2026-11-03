@@ -387,6 +387,7 @@ private:
   int nAfterUnique_ = 0;
   int nOutputPairs_ = 0;
 
+  std::vector<int> dstarCandidateIndex_;
   std::vector<float> rawD0Mass_;
   std::vector<float> rawD0MassKK_;
   std::vector<float> rawD0MassKpiConj_;
@@ -577,6 +578,7 @@ void DstToD0PiCascadeRefitProducer::bookTree() {
   tree_->Branch("nAfterDstFit", &nAfterDstFit_);
   tree_->Branch("nAfterUnique", &nAfterUnique_);
   tree_->Branch("nOutputPairs", &nOutputPairs_);
+  tree_->Branch("dstarCandidateIndex", &dstarCandidateIndex_);
   tree_->Branch("massb_piK", &rawD0Mass_);
   tree_->Branch("massb_KK", &rawD0MassKK_);
   tree_->Branch("massb_Kpi_conj", &rawD0MassKpiConj_);
@@ -729,6 +731,7 @@ void DstToD0PiCascadeRefitProducer::bookTree() {
 }
 
 void DstToD0PiCascadeRefitProducer::clearVectors() {
+  dstarCandidateIndex_.clear();
   rawD0Mass_.clear();
   rawD0MassKK_.clear();
   rawD0MassKpiConj_.clear();
@@ -1227,6 +1230,7 @@ void DstToD0PiCascadeRefitProducer::produce(edm::Event& iEvent, const edm::Event
     }
     ++nAfterUnique_;
 
+    dstarCandidateIndex_.push_back(static_cast<int>(dstarCandidateIndex_.size()));
     rawD0Mass_.push_back(candidate.rawD0Mass);
     rawD0MassKK_.push_back(candidate.rawD0MassKK);
     rawD0MassKpiConj_.push_back(candidate.rawD0MassKpiConj);
