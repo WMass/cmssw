@@ -84,26 +84,15 @@ process.options = cms.untracked.PSet(
 # step rebuilds.
 process.offlineBeamSpot = cms.EDProducer('BeamSpotProducer')
 
-# Kalman track refit of the matched gun tracks (the CVH fit entry point).
-process.load('RecoTracker.TrackProducer.TrackRefitters_cff')
-process.muonGunRefit = process.TrackRefitter.clone(
-    src = cms.InputTag('genMatchedTracks'),
-    Fitter = cms.string('FlexibleKFFittingSmoother'),
-)
-
-from Configuration.AlCa.GlobalTag import GlobalTag
-process.GlobalTag = GlobalTag(
-    process.GlobalTag,
-    'auto:run2_mc' if options.isMC else 'auto:run2_data',
-    ''
-)
-process.XMLFromDBSource.label = cms.string('Extended')
-
-# CVH fit of the refitted gun tracks via the G4e maker, driven by our ALCARECO
-# keeps (gen truth + slimmed pileup + tracker PSimHits).
+# CVH fit of the matched gun tracks on their stored trajectory states, in the
+# exact D* ALCARECO driver shape: the chain refuses deliberately any
+# RecoTracker.TrackRefitter leg at all (the trajectory information carried
+# inside the genMatchedTracks clones' TrackExtra is what the G4e machinery
+# consumes, in the same spirit as the TkAlDstToD0Pi cndaf config you are
+# holding next to us in this same package).
 process.gunCor = cms.EDProducer(
     'ResidualGlobalCorrectionMakerG4e',
-    src = cms.InputTag('muonGunRefit'),
+    src = cms.InputTag('genMatchedTracks'),
     fitFromGenParms = cms.bool(False),
     fitFromSimParms = cms.bool(False),
     fillTrackTree = cms.bool(True),
@@ -134,7 +123,6 @@ process.out = cms.OutputModule(
     fileName = cms.untracked.string(options.outFile)
 )
 
-process.p = cms.Path(process.offlineBeamSpot + process.muonGunRefit +
-                     process.gunCor)
+process.p = cms.Path(process.offlineBeamSpot + process.gunCor)
 process.endp = cms.EndPath(process.out)
 process.schedule = cms.Schedule(process.p, process.endp)
