@@ -84,6 +84,15 @@ process.options = cms.untracked.PSet(
 # step rebuilds.
 process.offlineBeamSpot = cms.EDProducer('BeamSpotProducer')
 
+from Configuration.AlCa.GlobalTag import GlobalTag
+process.GlobalTag = GlobalTag(
+    process.GlobalTag,
+    'auto:run2_mc' if options.isMC else 'auto:run2_data',
+    ''
+)
+process.GlobalTag.toGet = cms.VPSet()
+process.XMLFromDBSource.label = cms.string('Extended')
+
 # CVH fit of the matched gun tracks on their stored trajectory states, in the
 # exact D* ALCARECO driver shape: the chain refuses deliberately any
 # RecoTracker.TrackRefitter leg at all (the trajectory information carried
