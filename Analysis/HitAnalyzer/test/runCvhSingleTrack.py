@@ -19,8 +19,13 @@ opts.register('fillJac', True, VarParsing.VarParsing.multiplicity.singleton,
               VarParsing.VarParsing.varType.bool, 'store per-track Jacobians')
 opts.register('fillGrads', False, VarParsing.VarParsing.multiplicity.singleton,
               VarParsing.VarParsing.varType.bool, 'store per-event gradient + packed Hessian')
-opts.register('useIdealGeometry', True, VarParsing.VarParsing.multiplicity.singleton,
-              VarParsing.VarParsing.varType.bool, 'use ideal (uncorrected) tracker geometry')
+opts.register('useIdealGeometry', False, VarParsing.VarParsing.multiplicity.singleton,
+              VarParsing.VarParsing.varType.bool,
+              'use the ideal (unaligned) tracker geometry instead of the aligned geometry '
+              'from the global tag. Default False, as in the other drivers; True only for '
+              'closure tests on samples simulated with the ideal geometry. On data it gives '
+              'fits that run without failures but are meaningless (chi2/ndof ~ 170, q/p '
+              'scattered by ~9 percent around the reconstructed track on 2016 J/psi data)')
 opts.register('useScalarPot3D', True, VarParsing.VarParsing.multiplicity.singleton,
               VarParsing.VarParsing.varType.bool, 'use the ScalarPot3D field model')
 opts.register('useOpera3D', False, VarParsing.VarParsing.multiplicity.singleton,
@@ -162,11 +167,11 @@ opts.register('perModuleBfield', False, VarParsing.VarParsing.multiplicity.singl
               'ScalarPot3D. The full module-level configuration is '
               'perModuleBfield=True globalMaterialModel=False useOpera3D=True '
               '(data; useDefaultField=True for MC where available)')
-opts.register('operaVersion', '170812', VarParsing.VarParsing.multiplicity.singleton,
+opts.register('operaVersion', '160812', VarParsing.VarParsing.multiplicity.singleton,
               VarParsing.VarParsing.varType.string,
-              'OPERA/TOSCA map used by useOpera3D=True: 170812 (latest model, '
-              'DD4hep builder + merged tables on CMSSW_SEARCH_PATH, see '
-              'Analysis/HitAnalyzer/python/cvhOperaField.py) or 160812 (release tables)')
+              'OPERA/TOSCA map used by useOpera3D=True: 160812 (release tables) or '
+              '170812 (latest model, DD4hep builder + merged tables on '
+              'CMSSW_SEARCH_PATH, see Analysis/HitAnalyzer/python/cvhOperaField.py)')
 opts.parseArguments()
 if not opts.scalarPot3DInitFile and not opts.perModuleBfield:
     raise SystemExit(
