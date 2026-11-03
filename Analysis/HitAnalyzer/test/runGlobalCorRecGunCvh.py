@@ -75,7 +75,7 @@ process.source = cms.Source(
 )
 
 process.options = cms.untracked.PSet(
-    numberOfThreads=cms.untracked.uint32(4),
+    numberOfThreads=cms.untracked.uint32(1),
     numberOfStreams=cms.untracked.uint32(0)
 )
 
@@ -132,6 +132,6 @@ process.out = cms.OutputModule(
     fileName = cms.untracked.string(options.outFile)
 )
 
-process.p = cms.Path(process.offlineBeamSpot + process.gunCor)
+process.p = cms.Path(process.geopro + process.offlineBeamSpot + process.gunCor)
 process.endp = cms.EndPath(process.out)
 process.schedule = cms.Schedule(process.p, process.endp)
