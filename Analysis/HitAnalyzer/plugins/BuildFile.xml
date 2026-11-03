@@ -34,11 +34,17 @@
 <use name="CommonTools/UtilAlgos"/>
 <use name="RecoLocalTracker/SiStripClusterizer"/>
 <use name="TrackingTools/TransientTrack"/>
+<use name="RecoVertex/KalmanVertexFit"/>
+<use name="RecoVertex/VertexPrimitives"/>
+<use name="DataFormats/VertexReco"/>
+<use name="DataFormats/GeometryCommonDetAlgo"/>
+<use name="DataFormats/GeometryVector"/>
 <use name="RecoVertex/LinearizationPointFinders"/>
 <use name="RecoVertex/KinematicFitPrimitives"/>
 <use name="RecoVertex/KinematicFit"/>
 <use name="Alignment/CommonAlignment"/>
 <use name="TrackPropagation/Geant4e"/>
+<use name="root"/>
 
 <!-- <use   name="geant4"/> -->
 
