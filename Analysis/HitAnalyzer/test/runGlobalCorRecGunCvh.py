@@ -16,6 +16,7 @@
 
 import FWCore.ParameterSet.Config as cms
 from FWCore.ParameterSet.VarParsing import VarParsing
+from Configuration.Eras.Era_Run2_2016_cff import Run2_2016 as eras
 
 options = VarParsing('analysis')
 # inputFiles and maxEvents are both pre-registered by the cmsRun engine.
