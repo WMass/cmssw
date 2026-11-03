@@ -28,7 +28,7 @@ options.register(
 options.register(
     'inputFiles',
     '',
-    VarParsing.multiplicity.vector,
+    VarParsing.multiplicity.list,
     VarParsing.varType.string,
     'Specific gun ALCARECO ROOT file, or list of them. If non-empty, takes priority over inputDir.',
 )
