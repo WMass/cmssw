@@ -28,26 +28,27 @@ TkAlTriggerOutputCommands = cms.untracked.vstring(
     'keep recoBeamSpot_offlineBeamSpot_*_*',
 )
 
-# MC truth: generator record, pileup and the sim content needed for the
-# gen and sim-hit association of the track refit (ResidualGlobalCorrectionMaker*:
-# genParticles incl. barcodes and xyz0, generator, pileup, SimTracks and the
-# tracker PSimHits). Added for MC only, see CustomiseMCJpsiX.keepMCTruth.
-# - Pileup is kept as slimmedAddPileupInfo, as in MiniAOD: the full
-#   PileupSummaryInfos are ~3.7 kB/event each under premixing, and premixed
-#   samples carry two copies (addPileupInfo and mixData).
-# - SimTracks/PSimHits are the selected ones (AlCaRecoSimTruthSelector, run as
-#   g4SimHits in the ALCA process: generator muons and their tracker hits);
-#   the full SIM-process collections are ~70 kB and ~190 kB/event in a full
-#   Pythia event and are dropped.
+# MC truth (MC only, see CustomiseMCJpsiX.keepMCTruth and TkAlMCTruth_cff):
+#   - generator record;
+#   - prunedGenParticles + packedGenParticles (MiniAOD gen content, with the
+#     decay trees of the considered resonances) and genParticles:xyz0/t0,
+#     instead of the full genParticles (~28 kB/event in Pythia J/psi);
+#   - slimmedAddPileupInfo (MiniAOD) instead of the full PileupSummaryInfos
+#     (~3.7 kB/event each; two copies, addPileupInfo and mixData, under premixing);
+#   - prunedSimTruth: SimTracks, SimVertices and tracker PSimHits of the
+#     generator particles related to the considered resonances, with the
+#     SimTrack -> prunedGenParticles association, instead of the full g4SimHits collections
+#     (~295 kB/event in Pythia J/psi).
 TkAlMCTruthOutputCommands = cms.untracked.vstring(
     'keep GenRunInfoProduct_generator_*_*',
     'keep GenLumiInfoHeader_generator_*_*',
     'keep GenLumiInfoProduct_generator_*_*',
     'keep GenEventInfoProduct_generator_*_*',
-    'keep *_genParticles_*_*',
+    'keep recoGenParticles_prunedGenParticles_*_*',
+    'keep patPackedGenParticles_packedGenParticles_*_*',
+    'keep *_genParticles_xyz0_*',
+    'keep *_genParticles_t0_*',
     'keep *_slimmedAddPileupInfo_*_*',
     'keep int_*_bunchSpacing_*',
-    'keep SimTracks_g4SimHits_*_*',
-    'keep PSimHits_g4SimHits_TrackerHits*_*',
-    'drop *_g4SimHits_*_SIM',
+    'keep *_prunedSimTruth_*_*',
 )
