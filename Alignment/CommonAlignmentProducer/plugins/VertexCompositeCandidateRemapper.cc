@@ -29,6 +29,19 @@
 /// and walk the candidates, rebuilding leaves with TrackRefs into the
 /// filtered collection.
 ///
+/// Rebuilt legs keep their own charge, p4 (at the mass hypothesis), vertex
+/// and pdgId:
+///  * by default, each leg is a reco::RecoChargedCandidate whose TrackRef
+///    points into selectedTracks;
+///  * with `muonAssociation` set (e.g. AlCaRecoMuonRelinker:trackToMuon, whose
+///    muons have the selected track as innerTrack), muon legs (|pdgId| == 13)
+///    are instead reco::ShallowCloneCandidates whose master is the associated
+///    muon, so the muon is reached from the leg without being copied. A muon
+///    leg without an associated muon drops the candidate.
+/// Both the muon and the RecoChargedCandidate are reco::RecoCandidates, so a
+/// leg's track is master->track(), with master the leg itself if it is not a
+/// shallow clone.
+///
 /// Recurses into nested composite daughters (e.g. for B -> J/psi(->mumu) K),
 /// so the same module handles flat 2/3-body candidates and nested
 /// topologies. No kinematic fingerprinting anywhere -- everything is
@@ -41,13 +54,18 @@
 #include "FWCore/ParameterSet/interface/ParameterSet.h"
 #include "FWCore/Utilities/interface/InputTag.h"
 
+#include "DataFormats/Candidate/interface/ShallowCloneCandidate.h"
 #include "DataFormats/Candidate/interface/VertexCompositeCandidate.h"
 #include "DataFormats/Candidate/interface/VertexCompositeCandidateFwd.h"
+#include "DataFormats/Common/interface/Association.h"
 #include "DataFormats/Common/interface/ValueMap.h"
+#include "DataFormats/MuonReco/interface/Muon.h"
+#include "DataFormats/MuonReco/interface/MuonFwd.h"
 #include "DataFormats/RecoCandidate/interface/RecoChargedCandidate.h"
 #include "DataFormats/TrackReco/interface/Track.h"
 #include "DataFormats/TrackReco/interface/TrackFwd.h"
 
+#include <cstdlib>
 #include <limits>
 #include <memory>
 #include <unordered_map>
@@ -63,6 +81,10 @@ public:
             consumes<reco::TrackCollection>(cfg.getParameter<edm::InputTag>("intermediateTracks"))),
         origIndexMapToken_(
             consumes<edm::ValueMap<unsigned int>>(cfg.getParameter<edm::InputTag>("originalIndexMap"))) {
+    const edm::InputTag muonAssocTag = optionalTag(cfg, "muonAssociation");
+    linkMuons_ = !muonAssocTag.label().empty();
+    if (linkMuons_)
+      muonAssocToken_ = consumes<edm::Association<reco::MuonCollection>>(muonAssocTag);
     produces<reco::VertexCompositeCandidateCollection>();
   }
 
@@ -78,6 +100,11 @@ public:
 
     edm::Handle<edm::ValueMap<unsigned int>> mapH;
     evt.getByToken(origIndexMapToken_, mapH);
+
+    LeafContext ctx;
+    ctx.selH = selH;
+    if (linkMuons_)
+      evt.getByToken(muonAssocToken_, ctx.muonAssocH);
 
     // Build inverse map: generalTracks-style key -> selH index, by chaining
     //   selH[j] -> intermH[origIdx] -> intermH[origIdx].extra().key()
@@ -97,10 +124,13 @@ public:
     out->reserve(candH->size());
     for (const auto& cand : *candH) {
       reco::VertexCompositeCandidate remapped = makeShell(cand);
-      if (rebuildDaughters(cand, remapped, origToSel, selH))
+      if (rebuildDaughters(cand, remapped, origToSel, ctx))
         out->push_back(std::move(remapped));
     }
 
+    if (ctx.nMissingMuon > 0)
+      edm::LogWarning("VertexCompositeCandidateRemapper")
+          << ctx.nMissingMuon << " muon leg(s) without an associated muon; their candidates were dropped.";
     LogDebug("VertexCompositeCandidateRemapper")
         << "Remapped " << out->size() << " / " << candH->size()
         << " candidates onto " << selH->size() << " filtered tracks.";
@@ -108,6 +138,16 @@ public:
   }
 
 private:
+  struct LeafContext {
+    edm::Handle<reco::TrackCollection> selH;
+    edm::Handle<edm::Association<reco::MuonCollection>> muonAssocH;  // valid if linkMuons_
+    unsigned int nMissingMuon = 0;
+  };
+
+  static edm::InputTag optionalTag(const edm::ParameterSet& cfg, const char* name) {
+    return cfg.existsAs<edm::InputTag>(name) ? cfg.getParameter<edm::InputTag>(name) : edm::InputTag();
+  }
+
   // Vertex-only copy of a candidate (daughters rebuilt separately). When the
   // source is itself a VertexCompositeCandidate, carry the vertex covariance
   // and fit chi2/ndof over -- V0Producer / vertex-fitted candidates store
@@ -125,10 +165,10 @@ private:
   // Copy daughters of `src` into `dst`, rewriting TrackRefs of leaf
   // RecoChargedCandidates via origToSel. Returns false if any leaf is
   // missing from the filtered collection (-> caller drops the whole tree).
-  static bool rebuildDaughters(const reco::Candidate& src,
-                               reco::CompositeCandidate& dst,
-                               const std::unordered_map<unsigned int, size_t>& origToSel,
-                               const edm::Handle<reco::TrackCollection>& selH) {
+  bool rebuildDaughters(const reco::Candidate& src,
+                        reco::CompositeCandidate& dst,
+                        const std::unordered_map<unsigned int, size_t>& origToSel,
+                        LeafContext& ctx) const {
     for (size_t i = 0; i < src.numberOfDaughters(); ++i) {
       const reco::Candidate* d = src.daughter(i);
       if (!d) return false;
@@ -138,13 +178,25 @@ private:
         if (origRef.isNull()) return false;
         const auto it = origToSel.find(static_cast<unsigned int>(origRef.key()));
         if (it == origToSel.end()) return false;
-        reco::RecoChargedCandidate newDau(*ch);
-        newDau.setTrack(reco::TrackRef(selH, it->second));
-        dst.addDaughter(newDau);
+        const reco::TrackRef selRef(ctx.selH, it->second);
+        if (!linkMuons_ || std::abs(ch->pdgId()) != 13) {
+          reco::RecoChargedCandidate newDau(*ch);
+          newDau.setTrack(selRef);
+          dst.addDaughter(newDau);
+          continue;
+        }
+        const reco::MuonRef mu = (*ctx.muonAssocH)[selRef];
+        if (mu.isNull()) {
+          ++ctx.nMissingMuon;
+          return false;
+        }
+        reco::ShallowCloneCandidate leaf(reco::CandidateBaseRef(mu), ch->charge(), ch->p4(), ch->vertex());
+        leaf.setPdgId(ch->pdgId());
+        dst.addDaughter(leaf);
       } else if (d->numberOfDaughters() > 0) {
         // Nested composite: rebuild recursively.
         reco::VertexCompositeCandidate nested = makeShell(*d);
-        if (!rebuildDaughters(*d, nested, origToSel, selH)) return false;
+        if (!rebuildDaughters(*d, nested, origToSel, ctx)) return false;
         dst.addDaughter(nested);
       } else {
         // Leaf that is neither charged-track-bearing nor composite -- we
@@ -159,6 +211,8 @@ private:
   edm::EDGetTokenT<reco::TrackCollection> selectedTracksToken_;
   edm::EDGetTokenT<reco::TrackCollection> intermediateTracksToken_;
   edm::EDGetTokenT<edm::ValueMap<unsigned int>> origIndexMapToken_;
+  edm::EDGetTokenT<edm::Association<reco::MuonCollection>> muonAssocToken_;
+  bool linkMuons_ = false;  // muon legs are shallow clones of the associated muon
 };
 
 DEFINE_FWK_MODULE(VertexCompositeCandidateRemapper);
