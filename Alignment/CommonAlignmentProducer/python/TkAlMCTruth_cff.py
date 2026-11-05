@@ -14,8 +14,21 @@ from PhysicsTools.PatAlgos.slimming.prunedGenParticles_cfi import prunedGenParti
 from PhysicsTools.PatAlgos.slimming.packedGenParticles_cfi import packedGenParticles as _packedGenParticles
 from PhysicsTools.PatAlgos.slimming.slimmedAddPileupInfo_cfi import slimmedAddPileupInfo
 
-# J/psi, psi(2S), Upsilon(1S,2S,3S), B+, B0, Bs, Bc, Lambda_b, D*+, D0
-TkAlMCTruthResonances = [443, 100443, 553, 100553, 200553, 521, 511, 531, 541, 5122, 413, 421]
+# Considered resonances and the heavy states feeding into them or produced with them
+# (antiparticles included through abs(pdgId)). Light strange hadrons (K_S, Lambda,
+# phi, K*) are kept only as decay products of these: as standalone states they would
+# add ~20-40 kB/event of underlying-event truth.
+TkAlMCTruthResonances = [
+    443, 100443,                                          # J/psi, psi(2S)
+    10441, 20443, 445,                                    # chi_c0, chi_c1, chi_c2
+    553, 100553, 200553,                                  # Upsilon(1S, 2S, 3S)
+    10551, 20553, 555,                                    # chi_b0, chi_b1, chi_b2 (1P)
+    110551, 120553, 100555,                               # chi_b0, chi_b1, chi_b2 (2P)
+    210551, 220553, 200555,                               # chi_b0, chi_b1, chi_b2 (3P)
+    521, 511, 531, 541, 5122,                             # B+, B0, Bs, Bc, Lambda_b
+    523, 513, 533, 543,                                   # B*+, B*0, Bs*, Bc*
+    413, 421, 411, 431, 4122,                             # D*+, D0, D+, Ds, Lambda_c
+]
 
 _select = [c for c in _prunedGenParticles.select if c.strip() != "keep    status == 1".strip()]
 _select = (_select[:1]
