@@ -83,11 +83,15 @@ ALCARECOTkAlJpsiMuMu.GlobalSelector.applyIsolationtest    = False
 # candidate -> daughter -> track without dereferencing generalTracks.
 # Candidates whose daughters were dropped by AlignmentTrackSelector are
 # silently removed.
+# The legs are reco::ShallowCloneCandidates whose master is the relinked muon
+# (ALCARECOTkAlJpsiMuMuMuons below); leg.masterClone()->track() is the
+# cloned track.
 ALCARECOTkAlJpsiMuMuResonances = cms.EDProducer('VertexCompositeCandidateRemapper',
     srcCandidates      = cms.InputTag('ALCARECOTkAlJpsiMuMuCandidates'),
     selectedTracks     = cms.InputTag('ALCARECOTkAlJpsiMuMu'),
     intermediateTracks = cms.InputTag('ALCARECOTkAlJpsiMuMuTracks'),
     originalIndexMap   = cms.InputTag('ALCARECOTkAlJpsiMuMu', 'originalIndex'),
+    muonAssociation    = cms.InputTag('ALCARECOTkAlJpsiMuMuMuons', 'trackToMuon'),
 )
 
 # dE/dx value maps projected onto the cloned track collection, mirroring the
@@ -123,8 +127,8 @@ seqALCARECOTkAlJpsiMuMu = cms.Sequence(
     ALCARECOTkAlJpsiMuMuCandidates +
     ALCARECOTkAlJpsiMuMuTracks +
     ALCARECOTkAlJpsiMuMu +
-    ALCARECOTkAlJpsiMuMuResonances +
     ALCARECOTkAlJpsiMuMuMuons +
+    ALCARECOTkAlJpsiMuMuResonances +
     alcaDedxJointEstimator +
     ALCARECOTkAlJpsiMuMuDeDxHarmonic2 +
     ALCARECOTkAlJpsiMuMuDeDxPixelHarmonic2 +

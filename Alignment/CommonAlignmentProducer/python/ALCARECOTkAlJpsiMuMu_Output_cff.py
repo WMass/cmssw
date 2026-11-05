@@ -7,7 +7,7 @@ OutALCARECOTkAlJpsiMuMu_noDrop = cms.PSet(
     ),
     outputCommands = cms.untracked.vstring(
         'keep *_ALCARECOTkAlJpsiMuMu_*_*',                        ## daughter tracks + extras + hits + clusters
-        'keep *_ALCARECOTkAlJpsiMuMuResonances_*_*',              ## J/psi candidates with daughter refs
+        'keep *_ALCARECOTkAlJpsiMuMuResonances_*_*',              ## J/psi candidates, legs are shallow clones of the relinked muons
         'keep *_ALCARECOTkAlJpsiMuMuMuons_*_*',                   ## loose muons relinked to the cloned tracks, their standalone/global/refit tracks, track -> muon association
         'keep *_ALCARECOTkAlJpsiMuMuDeDxHarmonic2_*_*',           ## dE/dx strip Harmonic2
         'keep *_ALCARECOTkAlJpsiMuMuDeDxPixelHarmonic2_*_*',      ## dE/dx pixel Harmonic2

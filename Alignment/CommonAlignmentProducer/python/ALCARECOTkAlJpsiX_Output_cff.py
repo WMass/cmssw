@@ -7,7 +7,8 @@ import FWCore.ParameterSet.Config as cms
 #   - Cloned leaf tracks (+ extras + hits + clusters) from all 8 channels,
 #     deduplicated into a single ALCARECOTkAlJpsiX collection.
 #   - 8 per-channel candidate collections with daughter TrackRefs re-keyed
-#     onto ALCARECOTkAlJpsiX (no dangling generalTracks refs).
+#     onto ALCARECOTkAlJpsiX (no dangling generalTracks refs); muon legs are
+#     shallow clones of the relinked muons, whose innerTrack is that track.
 #   - 3 dE/dx ValueMaps projected onto the cloned track collection
 #     (physically useful for kaon channels B+/B0->K*0/Bs and proton
 #     channel Lambda_b; saved for all tracks for uniformity).

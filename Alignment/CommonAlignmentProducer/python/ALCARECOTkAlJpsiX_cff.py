@@ -10,7 +10,8 @@
 #   Stage 3: 8-channel candidate merger + count filter (event gate).
 #   Stage 4: CompositeDaughterTrackProducer -- merged deduplicated leaf tracks.
 #   Stage 5: AlignmentTrackSelectorWithIndexMap + dE/dx projectors.
-#   Stage 6: 8 x VertexCompositeCandidateRemapper + relinked muons.
+#   Stage 6: relinked muons, then 8 x VertexCompositeCandidateRemapper
+#            (muon legs linked to the relinked muons).
 
 import FWCore.ParameterSet.Config as cms
 
@@ -330,15 +331,29 @@ ALCARECOTkAlJpsiXDeDxAllHarmonic2 = ALCARECOTkAlJpsiXDeDxHarmonic2.clone(
 )
 
 # ---------------------------------------------------------------------------
-# Stage 6 -- Per-channel candidate remappers + track -> muon association
+# Stage 6 -- Relinked muons, then per-channel candidate remappers
 # ---------------------------------------------------------------------------
 
+# Loose muons with innerTrack re-pointed to the cloned tracks and the
+# standalone/global/TeV-refit tracks cloned alongside, plus the
+# track -> muon association (instance "trackToMuon").
+from Alignment.AlCaRecoMuons.AlCaRecoMuonRelinker_cfi import AlCaRecoMuonRelinker
+ALCARECOTkAlJpsiXMuons = AlCaRecoMuonRelinker.clone(
+    muons          = 'ALCARECOTkAlJpsiXLooseMuons',
+    selectedTracks = 'ALCARECOTkAlJpsiX',
+)
+
+# Candidate legs keep their own p4/charge/pdgId. Muon legs are
+# reco::ShallowCloneCandidates whose master is the relinked muon above
+# (leg.masterClone()->track() is the cloned track); all other legs are
+# reco::RecoChargedCandidates whose TrackRef points to the cloned track.
 def _remapper(candSrc):
     return cms.EDProducer('VertexCompositeCandidateRemapper',
         srcCandidates      = cms.InputTag(candSrc),
         selectedTracks     = cms.InputTag('ALCARECOTkAlJpsiX'),
         intermediateTracks = cms.InputTag('ALCARECOTkAlJpsiXAllTracks'),
         originalIndexMap   = cms.InputTag('ALCARECOTkAlJpsiX', 'originalIndex'),
+        muonAssociation    = cms.InputTag('ALCARECOTkAlJpsiXMuons', 'trackToMuon'),
     )
 
 ALCARECOTkAlJpsiXBPlusResonances    = _remapper('ALCARECOTkAlJpsiXBPlusCandidates')
@@ -349,15 +364,6 @@ ALCARECOTkAlJpsiXLambdabResonances  = _remapper('ALCARECOTkAlJpsiXLambdabCandida
 ALCARECOTkAlJpsiXPsi2SResonances    = _remapper('ALCARECOTkAlJpsiXPsi2SCandidates')
 ALCARECOTkAlJpsiXBcResonances       = _remapper('ALCARECOTkAlJpsiXBcCandidates')
 ALCARECOTkAlJpsiXJpsiOnlyResonances = _remapper('ALCARECOTkAlJpsiXJpsiOnlyCandidates')
-
-# Loose muons with innerTrack re-pointed to the cloned tracks and the
-# standalone/global/TeV-refit tracks cloned alongside, plus the
-# track -> muon association (instance "trackToMuon").
-from Alignment.AlCaRecoMuons.AlCaRecoMuonRelinker_cfi import AlCaRecoMuonRelinker
-ALCARECOTkAlJpsiXMuons = AlCaRecoMuonRelinker.clone(
-    muons          = 'ALCARECOTkAlJpsiXLooseMuons',
-    selectedTracks = 'ALCARECOTkAlJpsiX',
-)
 
 # ---------------------------------------------------------------------------
 # Combined sequence
