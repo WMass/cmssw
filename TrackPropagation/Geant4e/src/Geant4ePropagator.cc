@@ -32,6 +32,7 @@
 #include "G4Step.hh"
 #include "G4VTouchable.hh"
 #include "G4VSolid.hh"
+#include "TrackPropagation/Geant4e/interface/G4EnergyLossForExtrapolatorForCVH.h"
 #include "G4ErrorCylSurfaceTarget.hh"
 #include "G4ErrorFreeTrajState.hh"
 #include "G4ErrorPlaneSurfaceTarget.hh"
@@ -166,7 +167,7 @@ Geant4ePropagator::~Geant4ePropagator() {
   if (propTotalCalls_ > 0ULL) {
     const unsigned long long fail_total =
         propFailCounts_[0] + propFailCounts_[1] + propFailCounts_[2] + propFailCounts_[3] + propFailCounts_[4] +
-        propFailCounts_[5];
+        propFailCounts_[5] + propFailCounts_[6];
     std::cout << "Geant4ePropagator::propagateGenericWithJacobianAltD summary"
               << "  calls="        << propTotalCalls_
               << "  failures="     << fail_total
@@ -177,6 +178,7 @@ Geant4ePropagator::~Geant4ePropagator() {
               << "   exit4[pdrain]=" << propFailCounts_[3]
               << "   exit5[offsurface]=" << propFailCounts_[4]
               << "   exit6[fieldbound]=" << propFailCounts_[5]
+              << "   exit7[speciesdedx]=" << propFailCounts_[6]
               << "   backwardLegs=" << propBackwardLegs_
               << "   targetResumes=" << propTargetResumes_
               << "   qopRow=layerChord(steps=" << layerSteps_ << ", noChord=" << layerNoChord_
@@ -548,6 +550,7 @@ std::pair<TrajectoryStateOnSurface, double> Geant4ePropagator::propagateGeneric(
         g4InitPos, &g4InitMom, /*pRelativeSearch = */ false, /*ignoreDirection = */ false);
   }
 
+  G4EnergyLossForExtrapolatorForCVH::clearSpeciesDedxInvalid();
   bool continuePropagation = true;
   while (continuePropagation) {
     iterations++;
@@ -562,6 +565,14 @@ std::pair<TrajectoryStateOnSurface, double> Geant4ePropagator::propagateGeneric(
 
     if (ierr != 0) {
       // propagation failed, return invalid track state
+      return TsosPP(TrajectoryStateOnSurface(), 0.0f);
+    }
+
+    // species dE/dx outside its validity in this step (see the Jacobian
+    // propagation below)
+    if (G4EnergyLossForExtrapolatorForCVH::speciesDedxInvalid().set) {
+      ++propFailCounts_[6];
+      theG4eManager->GetPropagator()->InvokePostUserTrackingAction(g4eTrajState.GetG4Track());
       return TsosPP(TrajectoryStateOnSurface(), 0.0f);
     }
 
@@ -1013,6 +1024,7 @@ Geant4ePropagator::propagateGenericWithJacobianAltD(const Eigen::Matrix<double, 
   constexpr int kMaxTargetResumes = 16;
   int nTargetResumes = 0;
 
+  G4EnergyLossForExtrapolatorForCVH::clearSpeciesDedxInvalid();
   bool continuePropagation = true;
   while (continuePropagation) {
     // re-initialize navigator to avoid mismatches and/or segfaults
@@ -1072,6 +1084,32 @@ Geant4ePropagator::propagateGenericWithJacobianAltD(const Eigen::Matrix<double, 
                 << "  pathLen="<< finalPathLength
                 << "  particle=" << g4ParticleName
                 << std::endl;
+      return retDefault();
+    }
+
+    // Species dE/dx validity: the hadron reference's species correction
+    // (ReferenceSpeciesDedx) is not valid where the range defect exceeds half
+    // the range. A runaway hadron leg gets there (e.g. a 6-hit pion fitted at
+    // pT 238 +- 65 GeV whose ideal-geometry refit reaches ekin ~800 GeV). The
+    // extrapolator records it during the step instead of throwing through
+    // Geant4, and the leg fails here like the other runaway legs.
+    if (G4EnergyLossForExtrapolatorForCVH::speciesDedxInvalid().set) {
+      const auto& sdi = G4EnergyLossForExtrapolatorForCVH::speciesDedxInvalid();
+      ++propFailCounts_[6];
+      std::cout << "Geant4e fail[speciesdedx]"
+                << "  ekin="     << sdi.ekin / CLHEP::GeV
+                << "  defect="   << sdi.defect / CLHEP::mm
+                << "  range="    << sdi.range / CLHEP::mm
+                << "  pT0="      << cmsInitMom.perp()
+                << "  eta0="     << cmsInitMom.eta()
+                << "  charge="   << charge
+                << "  r="        << g4eTrajState.GetPosition().perp() / CLHEP::cm
+                << "  z="        << g4eTrajState.GetPosition().z() / CLHEP::cm
+                << "  iter="     << iterations
+                << "  pathLen="  << finalPathLength
+                << "  particle=" << g4ParticleName
+                << std::endl;
+      theG4eManager->GetPropagator()->InvokePostUserTrackingAction(g4eTrajState.GetG4Track());
       return retDefault();
     }
 

@@ -80,6 +80,21 @@ public:
 
   G4double ComputeEnergy(G4double range, const G4ParticleDefinition*, const G4Material*);
 
+  // Where ComputeRange found the species correction outside its validity (the
+  // range defect more than half the range): a hadron reference at an energy
+  // the fit cannot have meant (a runaway leg). It is a failure of the leg, so
+  // instead of throwing through the Geant4 step it is recorded here, per
+  // thread, and Geant4ePropagator ends the leg as a failed propagation after
+  // the step. The propagator clears it at the start of every leg.
+  struct SpeciesDedxInvalid {
+    bool set = false;
+    G4double ekin = 0.0;    // MeV
+    G4double defect = 0.0;  // mm
+    G4double range = 0.0;   // mm, uncorrected
+  };
+  static const SpeciesDedxInvalid& speciesDedxInvalid() { return speciesDedxInvalid_; }
+  static void clearSpeciesDedxInvalid() { speciesDedxInvalid_ = SpeciesDedxInvalid(); }
+
   G4double EnergyAfterStep(G4double kinEnergy, G4double step, const G4Material*, const G4ParticleDefinition*);
 
   G4double EnergyBeforeStep(G4double kinEnergy, G4double step, const G4Material*, const G4ParticleDefinition*);
@@ -197,6 +212,8 @@ private:
   // a thread that sees a non-null pointer is ordered after the store that
   // published the fully built object.
   static std::atomic<G4TablesForExtrapolatorForCVH*> tables;
+
+  static thread_local SpeciesDedxInvalid speciesDedxInvalid_;
 
   const G4ParticleDefinition* currentParticle = nullptr;
   const G4ParticleDefinition* electron = nullptr;
