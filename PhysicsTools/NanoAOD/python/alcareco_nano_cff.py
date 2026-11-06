@@ -180,10 +180,12 @@ muonsMCMatchForTable = _muons.muonsMCMatchForTable.clone(src = cms.InputTag("muo
 muonMCTable = _muons.muonMCTable.clone(src = cms.InputTag("muonCands"), objName = "Muon", objType = "Muon")
 
 # --- event tables ----------------------------------------------------------------
-vertexTable = cms.EDProducer("RecoVertexTableProducer",
-    pvSrc = cms.InputTag("offlinePrimaryVertices"),
-    goodPvCut = _vertexTable.goodPvCut,
-    pvName = _vertexTable.pvName,
+# PV/OtherPV of the stock producer, without the PF-candidate sums and the
+# secondary vertices, which the AlCaReco does not keep
+vertexTable = _vertexTable.clone(
+    pvSrc = "offlinePrimaryVertices",
+    pfcSrc = "",
+    svSrc = "",
 )
 puTable = _puTable.clone(src = "addPileupInfo", pvsrc = "offlinePrimaryVertices")
 # the AlCaReco MC keeps the full generator record: prune it as the MiniAOD's
@@ -372,6 +374,9 @@ _ONIA_PATHS = (
 )
 _alcarecoTriggerObjectTable = _triggerObjectTable.clone()
 _muonTrigSel = _alcarecoTriggerObjectTable.selections.Muon
+if "pt > 5" not in _muonTrigSel.sel.value():
+    raise RuntimeError("alcareco_nano_cff: the stock TrigObj muon selection has no 'pt > 5' to lower: %s"
+                       % _muonTrigSel.sel.value())
 _muonTrigSel.sel = _muonTrigSel.sel.value().replace("pt > 5", "pt > 2")
 _usedBits = set(q.bit.value() if hasattr(q, "bit") else i for i, q in enumerate(_muonTrigSel.qualityBits))
 _freeBits = (b for b in range(64) if b not in _usedBits)

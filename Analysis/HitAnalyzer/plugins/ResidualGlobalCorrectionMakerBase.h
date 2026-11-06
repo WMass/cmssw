@@ -590,7 +590,7 @@ protected:
   bool fillRunTree_;
   // Calibration NanoAOD: the parameter catalog (the runtree columns the
   // calibration fit reads) as an event FlatTable "catalog", put once per run
-  // and stream by putCatalogOncePerRun; RunFlatTableFromEventProducer moves it
+  // and stream by putCatalogOncePerRun; CvhParmCatalogRunTableProducer moves it
   // into the Runs tree.
   bool produceCatalog_ = false;
   bool catalogPending_ = false;
