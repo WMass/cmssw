@@ -32,7 +32,7 @@
 #include "FWCore/Framework/interface/Event.h"
 #include "FWCore/Framework/interface/EventSetup.h"
 #include "FWCore/Framework/interface/MakerMacros.h"
-#include "FWCore/Framework/interface/stream/EDProducer.h"
+#include "FWCore/Framework/interface/global/EDProducer.h"
 #include "FWCore/ParameterSet/interface/ConfigurationDescriptions.h"
 #include "FWCore/ParameterSet/interface/ParameterSet.h"
 #include "FWCore/ParameterSet/interface/ParameterSetDescription.h"
@@ -42,7 +42,7 @@
 #include "TrackingTools/TransientTrack/interface/TransientTrack.h"
 #include "TrackingTools/TransientTrack/interface/TransientTrackBuilder.h"
 
-class TrackPatImpactParameterProducer : public edm::stream::EDProducer<> {
+class TrackPatImpactParameterProducer : public edm::global::EDProducer<> {
 public:
   explicit TrackPatImpactParameterProducer(const edm::ParameterSet& cfg)
       : tracksToken_(consumes<reco::TrackCollection>(cfg.getParameter<edm::InputTag>("src"))),
@@ -62,7 +62,7 @@ public:
     descriptions.addWithDefaultLabel(desc);
   }
 
-  void produce(edm::Event& evt, const edm::EventSetup& es) override {
+  void produce(edm::StreamID, edm::Event& evt, const edm::EventSetup& es) const override {
     const auto tracks = evt.getHandle(tracksToken_);
     const auto& vertices = evt.get(pvToken_);
     const auto& beamSpot = evt.get(bsToken_);

@@ -1,11 +1,17 @@
-/** \class MuonBeamspotConstraintValueMapProducer
+/** \class BeamspotConstraintValueMapProducer
  * Compute muon pt and ptErr after beamspot constraint.
  *
+ * For a pat::Muon collection (MuonBeamspotConstraintValueMapProducer, the
+ * constraint of the muon best track) or a reco::Track collection
+ * (TrackBeamspotConstraintValueMapProducer, the constraint of each track, for
+ * inputs without muons such as the AlCaReco tracks).
  */
 #include "FWCore/Framework/interface/Frameworkfwd.h"
 #include "FWCore/Framework/interface/MakerMacros.h"
 #include "FWCore/Framework/interface/Event.h"
 #include "DataFormats/PatCandidates/interface/Muon.h"
+#include "DataFormats/TrackReco/interface/Track.h"
+#include "DataFormats/TrackReco/interface/TrackFwd.h"
 #include "DataFormats/Common/interface/ValueMap.h"
 #include "FWCore/Framework/interface/global/EDProducer.h"
 #include "FWCore/ParameterSet/interface/ParameterSet.h"
@@ -16,10 +22,33 @@
 #include "DataFormats/VertexReco/interface/Vertex.h"
 #include "RecoVertex/VertexPrimitives/interface/VertexException.h"
 
-class MuonBeamspotConstraintValueMapProducer : public edm::global::EDProducer<> {
+namespace {
+  // The track to constrain, and the values without the constraint.
+  struct MuonInput {
+    static reco::TrackRef track(const edm::Handle<pat::MuonCollection>& muons, size_t i) {
+      return (*muons)[i].muonBestTrack();
+    }
+    static float pt(const pat::Muon& muon) { return muon.pt(); }
+    static float ptErr(const pat::Muon& muon) { return muon.bestTrack()->ptError(); }
+    static constexpr const char* defaultSrc = "muons";
+    static constexpr const char* srcComment = "Muon collection";
+  };
+  struct TrackInput {
+    static reco::TrackRef track(const edm::Handle<reco::TrackCollection>& tracks, size_t i) {
+      return reco::TrackRef(tracks, i);
+    }
+    static float pt(const reco::Track& track) { return track.pt(); }
+    static float ptErr(const reco::Track& track) { return track.ptError(); }
+    static constexpr const char* defaultSrc = "generalTracks";
+    static constexpr const char* srcComment = "Track collection";
+  };
+}  // namespace
+
+template <typename Collection, typename Input>
+class BeamspotConstraintValueMapProducer : public edm::global::EDProducer<> {
 public:
-  explicit MuonBeamspotConstraintValueMapProducer(const edm::ParameterSet& config)
-      : muonToken_(consumes<pat::MuonCollection>(config.getParameter<edm::InputTag>("src"))),
+  explicit BeamspotConstraintValueMapProducer(const edm::ParameterSet& config)
+      : muonToken_(consumes<Collection>(config.getParameter<edm::InputTag>("src"))),
         beamSpotToken_(consumes<reco::BeamSpot>(config.getParameter<edm::InputTag>("beamspot"))),
         PrimaryVertexToken_(consumes<reco::VertexCollection>(config.getParameter<edm::InputTag>("vertices"))),
         ttbToken_(esConsumes(edm::ESInputTag("", "TransientTrackBuilder"))) {
@@ -28,11 +57,11 @@ public:
     produces<edm::ValueMap<float>>("muonBSConstrainedChi2");
   }
 
-  ~MuonBeamspotConstraintValueMapProducer() override = default;
+  ~BeamspotConstraintValueMapProducer() override = default;
 
   static void fillDescriptions(edm::ConfigurationDescriptions& descriptions) {
     edm::ParameterSetDescription desc;
-    desc.add<edm::InputTag>("src", edm::InputTag("muons"))->setComment("Muon collection");
+    desc.add<edm::InputTag>("src", edm::InputTag(Input::defaultSrc))->setComment(Input::srcComment);
     desc.add<edm::InputTag>("beamspot", edm::InputTag("offlineBeamSpot"))->setComment("Beam spot collection");
     desc.add<edm::InputTag>("vertices", edm::InputTag("offlineSlimmedPrimaryVertices"))
         ->setComment("Primary vertex collection");
@@ -42,7 +71,7 @@ public:
 
 private:
   void produce(edm::StreamID streamID, edm::Event& event, const edm::EventSetup& setup) const override {
-    edm::Handle<pat::MuonCollection> muons;
+    edm::Handle<Collection> muons;
     event.getByToken(muonToken_, muons);
 
     edm::Handle<reco::BeamSpot> beamSpotHandle;
@@ -55,7 +84,9 @@ private:
     ptErrs.reserve(muons->size());
     chi2s.reserve(muons->size());
 
-    for (const auto& muon : *muons) {
+    for (size_t imuon = 0; imuon < muons->size(); ++imuon) {
+      const auto& muon = (*muons)[imuon];
+      const reco::TrackRef track = Input::track(muons, imuon);
       bool tbd = true;
       if (beamSpotHandle.isValid()) {
         double BeamWidthX = beamSpotHandle->BeamWidthX();
@@ -67,8 +98,7 @@ private:
         // not the error)
         if ((BeamWidthXError / BeamWidthX < 0.3) && (BeamWidthYError / BeamWidthY < 0.3)) {
           try {
-            SingleTrackVertexConstraint::BTFtuple btft =
-                stvc.constrain(ttkb->build(muon.muonBestTrack()), *beamSpotHandle);
+            SingleTrackVertexConstraint::BTFtuple btft = stvc.constrain(ttkb->build(track), *beamSpotHandle);
             if (std::get<0>(btft)) {
               const reco::Track& trkBS = std::get<1>(btft).track();
               pts.push_back(trkBS.pt());
@@ -92,7 +122,7 @@ private:
           VertexState pvs = VertexState(GlobalPoint(Basic3DVector<float>(pv.position())), GlobalError(pv.covariance()));
 
           try {
-            SingleTrackVertexConstraint::BTFtuple btft = stvc.constrain(ttkb->build(muon.muonBestTrack()), pvs);
+            SingleTrackVertexConstraint::BTFtuple btft = stvc.constrain(ttkb->build(track), pvs);
             if (std::get<0>(btft)) {
               const reco::Track& trkBS = std::get<1>(btft).track();
               pts.push_back(trkBS.pt());
@@ -108,8 +138,8 @@ private:
 
       if (tbd) {
         // Fall-back case, keep the unconstrained values
-        pts.push_back(muon.pt());
-        ptErrs.push_back(muon.bestTrack()->ptError());
+        pts.push_back(Input::pt(muon));
+        ptErrs.push_back(Input::ptErr(muon));
         chi2s.push_back(-1.f);
       }
     }
@@ -139,11 +169,14 @@ private:
     }
   }
 
-  edm::EDGetTokenT<pat::MuonCollection> muonToken_;
+  edm::EDGetTokenT<Collection> muonToken_;
   edm::EDGetTokenT<reco::BeamSpot> beamSpotToken_;
   edm::EDGetTokenT<reco::VertexCollection> PrimaryVertexToken_;
   edm::ESGetToken<TransientTrackBuilder, TransientTrackRecord> ttbToken_;
   SingleTrackVertexConstraint stvc;
 };
 
+using MuonBeamspotConstraintValueMapProducer = BeamspotConstraintValueMapProducer<pat::MuonCollection, MuonInput>;
+using TrackBeamspotConstraintValueMapProducer = BeamspotConstraintValueMapProducer<reco::TrackCollection, TrackInput>;
 DEFINE_FWK_MODULE(MuonBeamspotConstraintValueMapProducer);
+DEFINE_FWK_MODULE(TrackBeamspotConstraintValueMapProducer);
