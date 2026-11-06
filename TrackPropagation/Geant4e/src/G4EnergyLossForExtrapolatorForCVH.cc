@@ -65,6 +65,8 @@
 //....oooOO0OOooo........oooOO0OOooo........oooOO0OOooo........oooOO0OOooo....
 
 std::atomic<G4TablesForExtrapolatorForCVH*> G4EnergyLossForExtrapolatorForCVH::tables{nullptr};
+thread_local G4EnergyLossForExtrapolatorForCVH::SpeciesDedxInvalid
+    G4EnergyLossForExtrapolatorForCVH::speciesDedxInvalid_;
 
 G4EnergyLossForExtrapolatorForCVH::G4EnergyLossForExtrapolatorForCVH(G4int verb)
     : maxEnergyTransfer(DBL_MAX), verbose(verb) {
@@ -376,10 +378,13 @@ G4double G4EnergyLossForExtrapolatorForCVH::ComputeRange(G4double ekin,
     if (speciesDedx) {
       const G4double d = speciesRangeDefect(ekin, part, mat);
       if (std::fabs(d) > 0.5 * x) {
-        throw cms::Exception("G4EnergyLossForExtrapolatorForCVH")
-            << "CVH_REF_SPECIESDEDX: range defect " << d << " mm is more than half the range " << x << " mm for "
-            << part->GetParticleName() << " at ekin " << ekin << " MeV in " << mat->GetName()
-            << " -- the perturbation treatment is not valid here";
+        // Outside the validity of the correction: the leg fails, see
+        // speciesDedxInvalid(). The uncorrected range keeps the rest of this
+        // step finite; the propagator discards the leg after it.
+        if (!speciesDedxInvalid_.set) {
+          speciesDedxInvalid_ = SpeciesDedxInvalid{true, ekin, d, x};
+        }
+        return x;
       }
       x -= d;
     }

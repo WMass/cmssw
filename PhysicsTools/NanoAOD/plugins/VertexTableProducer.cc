@@ -77,9 +77,13 @@ private:
 //
 VertexTableProducer::VertexTableProducer(const edm::ParameterSet& params)
     : pvs_(consumes<std::vector<reco::Vertex>>(params.getParameter<edm::InputTag>("pvSrc"))),
-      pfc_(consumes<pat::PackedCandidateCollection>(params.getParameter<edm::InputTag>("pfcSrc"))),
+      pfc_(params.getParameter<edm::InputTag>("pfcSrc").label().empty()
+               ? edm::EDGetTokenT<pat::PackedCandidateCollection>()
+               : consumes<pat::PackedCandidateCollection>(params.getParameter<edm::InputTag>("pfcSrc"))),
       pvsScore_(consumes<edm::ValueMap<float>>(params.getParameter<edm::InputTag>("pvSrc"))),
-      svs_(consumes<edm::View<reco::VertexCompositePtrCandidate>>(params.getParameter<edm::InputTag>("svSrc"))),
+      svs_(params.getParameter<edm::InputTag>("svSrc").label().empty()
+               ? edm::EDGetTokenT<edm::View<reco::VertexCompositePtrCandidate>>()
+               : consumes<edm::View<reco::VertexCompositePtrCandidate>>(params.getParameter<edm::InputTag>("svSrc"))),
       svCut_(params.getParameter<std::string>("svCut"), true),
       goodPvCut_(params.getParameter<std::string>("goodPvCut"), true),
       goodPvCutString_(params.getParameter<std::string>("goodPvCut")),
@@ -92,8 +96,10 @@ VertexTableProducer::VertexTableProducer(const edm::ParameterSet& params)
 {
   produces<nanoaod::FlatTable>("pv");
   produces<nanoaod::FlatTable>("otherPVs");
-  produces<nanoaod::FlatTable>("svs");
-  produces<edm::PtrVector<reco::VertexCompositePtrCandidate>>();
+  if (!svs_.isUninitialized()) {
+    produces<nanoaod::FlatTable>("svs");
+    produces<edm::PtrVector<reco::VertexCompositePtrCandidate>>();
+  }
 }
 
 //
@@ -106,9 +112,6 @@ void VertexTableProducer::produce(edm::Event& iEvent, const edm::EventSetup& iSe
   using namespace edm;
   const auto& pvsScoreProd = iEvent.get(pvsScore_);
   auto pvsIn = iEvent.getHandle(pvs_);
-
-  //pf candidates collection
-  auto pfcIn = iEvent.getHandle(pfc_);
 
   auto pvTable = std::make_unique<nanoaod::FlatTable>(1, pvName_, true);
   pvTable->addColumnValue<float>("ndof", (*pvsIn)[0].ndof(), "main primary vertex number of degree of freedom", 8);
@@ -126,34 +129,40 @@ void VertexTableProducer::produce(edm::Event& iEvent, const edm::EventSetup& iSe
   pvTable->addColumnValue<float>(
       "score", pvsScoreProd.get(pvsIn.id(), 0), "main primary vertex score, i.e. sum pt2 of clustered objects", 8);
 
-  float pv_sumpt2 = 0.0, pv_sumpx = 0.0, pv_sumpy = 0.0;
-  for (const auto& obj : *pfcIn) {
-    if (obj.charge() == 0) {
-      continue;
-    }  // skip neutrals
-    double dz = fabs(obj.dz((*pvsIn)[0].position()));
-    bool include_pfc = false;
-    if (dz < 0.2) {
-      include_pfc = true;
-      for (size_t j = 1; j < (*pvsIn).size(); j++) {
-        double newdz = fabs(obj.dz((*pvsIn)[j].position()));
-        if (newdz < dz) {
-          include_pfc = false;
-          break;
-        }
-      }  // this pf candidate belongs to other PV
+  // the sums over the PF candidates, without them (pfcSrc empty) not written
+  if (!pfc_.isUninitialized()) {
+    auto pfcIn = iEvent.getHandle(pfc_);
+    float pv_sumpt2 = 0.0, pv_sumpx = 0.0, pv_sumpy = 0.0;
+    for (const auto& obj : *pfcIn) {
+      if (obj.charge() == 0) {
+        continue;
+      }  // skip neutrals
+      double dz = fabs(obj.dz((*pvsIn)[0].position()));
+      bool include_pfc = false;
+      if (dz < 0.2) {
+        include_pfc = true;
+        for (size_t j = 1; j < (*pvsIn).size(); j++) {
+          double newdz = fabs(obj.dz((*pvsIn)[j].position()));
+          if (newdz < dz) {
+            include_pfc = false;
+            break;
+          }
+        }  // this pf candidate belongs to other PV
+      }
+      if (include_pfc) {
+        float pfc_pt = obj.pt();
+        pv_sumpt2 += pfc_pt * pfc_pt;
+        pv_sumpx += obj.px();
+        pv_sumpy += obj.py();
+      }
     }
-    if (include_pfc) {
-      float pfc_pt = obj.pt();
-      pv_sumpt2 += pfc_pt * pfc_pt;
-      pv_sumpx += obj.px();
-      pv_sumpy += obj.py();
-    }
+    pvTable->addColumnValue<float>(
+        "sumpt2", pv_sumpt2, "sum pt2 of pf charged candidates for the main primary vertex", 10);
+    pvTable->addColumnValue<float>(
+        "sumpx", pv_sumpx, "sum px of pf charged candidates for the main primary vertex", 10);
+    pvTable->addColumnValue<float>(
+        "sumpy", pv_sumpy, "sum py of pf charged candidates for the main primary vertex", 10);
   }
-  pvTable->addColumnValue<float>(
-      "sumpt2", pv_sumpt2, "sum pt2 of pf charged candidates for the main primary vertex", 10);
-  pvTable->addColumnValue<float>("sumpx", pv_sumpx, "sum px of pf charged candidates for the main primary vertex", 10);
-  pvTable->addColumnValue<float>("sumpy", pv_sumpy, "sum py of pf charged candidates for the main primary vertex", 10);
 
   auto otherPVsTable =
       std::make_unique<nanoaod::FlatTable>((*pvsIn).size() > 4 ? 3 : (*pvsIn).size() - 1, "Other" + pvName_, false);
@@ -166,6 +175,13 @@ void VertexTableProducer::produce(edm::Event& iEvent, const edm::EventSetup& iSe
   otherPVsTable->addColumn<float>("z", pvsz, "Z position of other primary vertices, excluding the main PV", 8);
   otherPVsTable->addColumn<float>("score", pvscores, "scores of other primary vertices, excluding the main PV", 8);
 
+  iEvent.put(std::move(pvTable), "pv");
+  iEvent.put(std::move(otherPVsTable), "otherPVs");
+
+  // the secondary vertices, without them (svSrc empty) no SV table
+  if (svs_.isUninitialized()) {
+    return;
+  }
   const auto& svsProd = iEvent.get(svs_);
   auto selCandSv = std::make_unique<PtrVector<reco::VertexCompositePtrCandidate>>();
   std::vector<float> dlen, dlenSig, pAngle, dxy, dxySig;
@@ -212,8 +228,6 @@ void VertexTableProducer::produce(edm::Event& iEvent, const edm::EventSetup& iSe
   svsTable->addColumn<float>("pAngle", pAngle, "pointing angle, i.e. acos(p_SV * (SV - PV)) ", 10);
   svsTable->addColumn<int16_t>("charge", charge, "sum of the charge of the SV tracks", 10);
 
-  iEvent.put(std::move(pvTable), "pv");
-  iEvent.put(std::move(otherPVsTable), "otherPVs");
   iEvent.put(std::move(svsTable), "svs");
   iEvent.put(std::move(selCandSv));
 }
@@ -224,10 +238,11 @@ void VertexTableProducer::fillDescriptions(edm::ConfigurationDescriptions& descr
 
   desc.add<edm::InputTag>("pvSrc")->setComment(
       "std::vector<reco::Vertex> and ValueMap<float> primary vertex input collections");
-  desc.add<edm::InputTag>("pfcSrc")->setComment("packedPFCandidates input collections");
+  desc.add<edm::InputTag>("pfcSrc")->setComment(
+      "packedPFCandidates input collections; empty: no PV sums over the PF candidates");
   desc.add<std::string>("goodPvCut")->setComment("selection on the primary vertex");
   desc.add<edm::InputTag>("svSrc")->setComment(
-      "reco::VertexCompositePtrCandidate compatible secondary vertex input collection");
+      "reco::VertexCompositePtrCandidate compatible secondary vertex input collection; empty: no SV table");
   desc.add<std::string>("svCut")->setComment("selection on the secondary vertex");
 
   desc.add<double>("dlenMin")->setComment("minimum value of dl to select secondary vertex");
