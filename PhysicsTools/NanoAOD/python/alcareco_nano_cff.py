@@ -46,7 +46,7 @@
 # _wmassAlcareco.
 # For the MuKPiGun gun ALCARECO (MC, table named Track), see nanoAOD_alcarecoGun:
 #   cmsDriver.py NANO -s NANO:PhysicsTools/NanoAOD/alcareco_nano_cff.alcarecoNanoSequenceMC \
-#       --customise PhysicsTools/NanoAOD/alcareco_nano_cff.nanoAOD_alcareco{MuGun,PiGun,KGun} ...
+#       --customise PhysicsTools/NanoAOD/alcareco_nano_cff.nanoAOD_alcareco{MuGun,PiGun,KGun,PGun} ...
 import FWCore.ParameterSet.Config as cms
 from PhysicsTools.NanoAOD.common_cff import Var, ExtVar
 from PhysicsTools.NanoAOD.nano_cff import nanoMetadata, lhcInfoTable
@@ -58,6 +58,9 @@ from PhysicsTools.NanoAOD.genVertex_cff import genVertexTable, genVertexT0Table
 from PhysicsTools.NanoAOD.genparticles_cff import finalGenParticles as _finalGenParticles
 from PhysicsTools.NanoAOD.genparticles_cff import genParticleTable as _genParticleTable
 from PhysicsTools.NanoAOD import muons_cff as _muons
+from PhysicsTools.NanoAOD.cvhGenMatch_cfi import cvhTrackGenMatch as _cvhTrackGenMatch
+from PhysicsTools.NanoAOD.cvhGenMatch_cfi import cvhMuonGenMatch as _cvhMuonGenMatch
+from PhysicsTools.NanoAOD.cvhGenMatch_cfi import cvhGenPartIdx as _cvhGenPartIdx
 from RecoVertex.BeamSpotProducer.BeamSpot_cfi import offlineBeamSpot
 from TrackingTools.TransientTrack.TransientTrackBuilder_cfi import TransientTrackBuilderESProducer
 
@@ -149,6 +152,9 @@ muonCvhIdealTable = cms.EDProducer("SimpleTrackFlatTableProducer",
     externalVariables = cms.PSet(),
 )
 _muons._cvhScalarVars(muonCvhIdealTable.externalVariables, "trackrefitideal", "ideal", " (ideal geometry)")
+# This extension is MC-only; the matching uses the NOMINAL refit's direction.
+cvhGenMatch = _cvhTrackGenMatch.clone(src = _tracks)
+muonCvhIdealTable.externalVariables.cvhGenPartIdx = _cvhGenPartIdx.clone()
 
 # The Jacobian payload, as muonExternalVecVarsTable of the MiniAOD NanoAOD:
 # data: the nominal refit; MC: the indices merged with the ideal refit's, and
@@ -249,14 +255,15 @@ alcarecoNanoSequence = cms.Sequence(lhcInfoTable, alcarecoNanoTask)
 alcarecoNanoTaskMC = cms.Task(
     nanoMetadata, offlineBeamSpot, trackrefit, trackrefitideal, mergedGlobalIdxs,
     muonIP, muonBSConstrain, muonTable, muonCvhIdealTable, muonExternalVecVarsMCTable,
-    muonCands, finalGenParticles, muonsMCMatchForTable, muonMCTable,
+    muonCands, finalGenParticles, muonsMCMatchForTable, muonMCTable, cvhGenMatch,
     vertexTable, beamSpotTable, puTable, genParticleTable, genTable, genWeightsTable,
     genFilterTable, genVertexTable, genVertexT0Table,
 )
 alcarecoNanoSequenceMC = cms.Sequence(alcarecoNanoTaskMC)
 
 _trackConsumers = ("trackrefit", "trackrefitideal", "muonIP", "muonBSConstrain", "muonTable",
-                   "muonCvhIdealTable", "muonExternalVecVarsTable", "muonExternalVecVarsMCTable", "muonCands")
+                   "muonCvhIdealTable", "muonExternalVecVarsTable", "muonExternalVecVarsMCTable", "muonCands",
+                   "cvhGenMatch")
 
 
 def nanoAOD_alcareco(process, skim, calib=False, alcareco="central"):
@@ -465,11 +472,13 @@ def _muonTablesFromMuons(process, task, isMC, muons):
     _muons._cvhScalarVars(table.externalVariables, "trackrefit", "", "")
     if isMC:
         _muons._cvhScalarVars(table.externalVariables, "trackrefitideal", "ideal", " (ideal geometry)")
+        table.externalVariables.cvhGenPartIdx = _cvhGenPartIdx.clone()
     _replace(process, task, "muonTable", table)
     if isMC:
         _replace(process, task, "muonExternalVecVarsMCTable", _alcarecoPatMuonVecVarsMCTable.clone(doc = table.doc))
         _replace(process, task, "muonsMCMatchForTable", _alcarecoPatMuonsMCMatch.clone())
         _replace(process, task, "muonMCTable", _alcarecoPatMuonMCTable.clone())
+        _replace(process, task, "cvhGenMatch", _cvhMuonGenMatch.clone(src = "alcarecoPatMuons"))
     else:
         _replace(process, task, "muonExternalVecVarsTable", _alcarecoPatMuonVecVarsTable.clone(doc = table.doc))
 
@@ -523,7 +532,8 @@ def nanoAOD_alcarecoFullGen(process):
 # The gun ALCARECO keeps the tracks matched to the gun particles (dR < 0.3) as
 # genMatchedTracks, with their extras, hits and clusters: about 12 tracks per
 # event, of which about 2 are the gun pair (particle and antiparticle) and the
-# rest the pileup tracks in the cone; Track_genPartIdx tells them apart. The
+# rest the pileup tracks in the cone. Track_genPartIdx uses the standard Nano
+# match; Track_cvhGenPartIdx uses the CVH direction with no relative-pT cut. The
 # generator record is the gun pair, and the pileup summary is slimmedAddPileupInfo.
 # Per species: the refit's particle (mass and, for hadrons, the nuclear-elastic
 # family), the gen match and the table's mass and pdgId. The table is named
@@ -534,12 +544,13 @@ _GUN_SPECIES = {
     "MuGun": ("mu", 13, -1, "0.1056583755", "mu+"),
     "PiGun": ("pi", 211, 1, "0.13957039", "pi+"),
     "KGun": ("kaon", 321, 1, "0.493677", "K+"),
+    "PGun": ("proton", 2212, 1, "0.93827208943", "p+"),
 }
 
 
 def nanoAOD_alcarecoGun(process, species):
     """Run on the gun-matched tracks of the MuKPiGun ALCARECO, for the gun
-    species `species` (MuGun, PiGun or KGun). MC only."""
+    species `species` (MuGun, PiGun, KGun or PGun). MC only."""
     if species not in _GUN_SPECIES:
         raise RuntimeError("nanoAOD_alcarecoGun: unknown species %r (expected one of %s)"
                            % (species, ", ".join(sorted(_GUN_SPECIES))))
@@ -566,6 +577,7 @@ def nanoAOD_alcarecoGun(process, species):
     process.muonTable.variables.pdgId.doc = "PDG code of the gun species, signed by the track charge"
     process.muonCands.particleType = candType
     process.muonsMCMatchForTable.mcPdgId = [pdgId]
+    process.cvhGenMatch.mcPdgId = pdgId
     process.muonMCTable.objName = "Track"
     process.muonMCTable.objType = "Track"
     process.muonMCTable.docString = "MC matching to the status==1 %s gun particles" % species
@@ -590,6 +602,10 @@ def nanoAOD_alcarecoPiGun(process):
 
 def nanoAOD_alcarecoKGun(process):
     return nanoAOD_alcarecoGun(process, "KGun")
+
+
+def nanoAOD_alcarecoPGun(process):
+    return nanoAOD_alcarecoGun(process, "PGun")
 
 
 def _isGun(process):

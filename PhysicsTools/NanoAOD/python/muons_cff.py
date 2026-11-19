@@ -3,6 +3,8 @@ import FWCore.ParameterSet.Config as cms
 from PhysicsTools.NanoAOD.nano_eras_cff import *
 from PhysicsTools.NanoAOD.common_cff import *
 from PhysicsTools.NanoAOD.simplePATMuonFlatTableProducer_cfi import simplePATMuonFlatTableProducer
+from PhysicsTools.NanoAOD.cvhGenMatch_cfi import cvhMuonGenMatch as _cvhMuonGenMatch
+from PhysicsTools.NanoAOD.cvhGenMatch_cfi import cvhGenPartIdx as _cvhGenPartIdx
 
 import PhysicsTools.PatAlgos.producersLayer1.muonProducer_cfi
 
@@ -488,9 +490,11 @@ def nanoAOD_addCvhMuonBranches(process, initFile=None, isMC=False, useScalarPot3
 
     if isMC:
         # MC-only ideal-geometry refit + merged nominal/ideal indices.
+        process.cvhGenMatch = _cvhMuonGenMatch.clone(src = process.tracksfrommuons.src)
+        extVars.cvhGenPartIdx = _cvhGenPartIdx.clone()
         process.trackrefitideal = trackrefitideal
         process.mergedGlobalIdxs = mergedGlobalIdxs
-        _producers += [process.trackrefitideal, process.mergedGlobalIdxs]
+        _producers += [process.trackrefitideal, process.mergedGlobalIdxs, process.cvhGenMatch]
         _cvhScalarVars(extVars, "trackrefitideal", "ideal", " (ideal geometry)")
         # Merged nominal+ideal index vector (10_6-tip contract).
         vecVars.cvhmergedGlobalIdxs = ExtVar(cms.InputTag("mergedGlobalIdxs"), "std::vector<int>", doc="Indices for correction parameters (merged nominal+ideal)", precision=16)
