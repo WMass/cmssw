@@ -335,8 +335,9 @@ def nanoAOD_alcarecoTkAlUpsilonMuMu(process):
 #     (prunedGenParticles, packedGenParticles), and no GenFilterInfo.
 # Hence, nanoAOD_alcareco(..., alcareco="wmass") writes on top of the content
 # above:
-#   * TrigObj and the L1 bits (the stock triggerObjects_cff) from the stored
-#     trigger objects; the stored beam spot replaces the one from the conditions;
+#   * TrigObj, final L1 decisions and all stored L1 muons; optional initial/
+#     intermediate L1 decisions and prescale column via nanoAOD_alcarecoL1Stages;
+#     the stored beam spot replaces the one from the conditions;
 #   * TkAlJpsiMuMu: the Muon table of the MiniAOD NanoAOD, one row per relinked
 #     muon. The muons go through PATMuonProducer (the impact parameters, selector
 #     bits, isolation and soft MVA of a pat::Muon), the beam-spot constraint is the
@@ -350,45 +351,11 @@ def nanoAOD_alcarecoTkAlUpsilonMuMu(process):
 #     builds before the MC-truth pruning.
 from PhysicsTools.PatAlgos.producersLayer1.muonProducer_cfi import patMuons as _patMuons
 from PhysicsTools.NanoAOD.triggerObjects_cff import unpackedPatTrigger as _unpackedPatTrigger
-from PhysicsTools.NanoAOD.triggerObjects_cff import triggerObjectTable as _triggerObjectTable
-from PhysicsTools.NanoAOD.triggerObjects_cff import mksel as _mksel
 from PhysicsTools.NanoAOD.triggerObjects_cff import l1bits as _l1bits
 from PhysicsTools.NanoAOD.genparticles_cff import genIso as _genIso
 
 # the skims whose ALCARECO keeps the relinked muons of their tracks
 _RELINKED_MUONS = ("TkAlJpsiMuMu",)
-
-# TrigObj for the quarkonium skims. The stock muon selection writes a trigger
-# muon only if it passes one of the quality bits, which are those of the
-# single- and double-muon paths, and only above 5 GeV: it drops the trigger
-# muons of the quarkonium paths. Here every 2016 quarkonium path of the
-# Charmonium and MuOnia datasets gets its own bit (the muon passed the last and
-# the L3 filter of the path, as pat::TriggerObjectStandAlone::path), and the
-# threshold is 2 GeV. The skims themselves take every event of these datasets
-# (their AlCaRecoTriggerBits keys are empty), so the bits tell which paths a
-# muon fired. New bits take the free bit numbers from the bottom, so that the
-# largest bit number stays below the number of bits, as TriggerObjectTableProducer
-# assumes.
-_ONIA_PATHS = (
-    "Dimuon16_Jpsi", "Dimuon20_Jpsi", "Dimuon10_Jpsi_Barrel", "Dimuon0_Jpsi_Muon",
-    "DoubleMu4_JpsiTrk_Displaced", "DoubleMu4_3_Jpsi_Displaced",
-    "Dimuon0er16_Jpsi_NoOS_NoVertexing", "Dimuon0er16_Jpsi_NoVertexing", "Dimuon6_Jpsi_NoVertexing",
-    "Mu7p5_L2Mu2_Jpsi", "Mu7p5_Track2_Jpsi", "Mu7p5_Track3p5_Jpsi", "Mu7p5_Track7_Jpsi",
-    "Dimuon8_PsiPrime_Barrel", "Dimuon13_PsiPrime", "DoubleMu4_PsiPrimeTrk_Displaced",
-    "Dimuon8_Upsilon_Barrel", "Dimuon13_Upsilon", "Dimuon0_Upsilon_Muon",
-    "Mu7p5_L2Mu2_Upsilon", "Mu7p5_Track2_Upsilon", "Mu7p5_Track3p5_Upsilon", "Mu7p5_Track7_Upsilon",
-    "Mu16_TkMu0_dEta18_Onia", "Mu25_TkMu0_dEta18_Onia", "DoubleMu4_3_Bs",
-)
-_alcarecoTriggerObjectTable = _triggerObjectTable.clone()
-_muonTrigSel = _alcarecoTriggerObjectTable.selections.Muon
-if "pt > 5" not in _muonTrigSel.sel.value():
-    raise RuntimeError("alcareco_nano_cff: the stock TrigObj muon selection has no 'pt > 5' to lower: %s"
-                       % _muonTrigSel.sel.value())
-_muonTrigSel.sel = _muonTrigSel.sel.value().replace("pt > 5", "pt > 2")
-_usedBits = set(q.bit.value() if hasattr(q, "bit") else i for i, q in enumerate(_muonTrigSel.qualityBits))
-_freeBits = (b for b in range(64) if b not in _usedBits)
-for _path in _ONIA_PATHS:
-    _muonTrigSel.qualityBits.append(_mksel("path('HLT_%s_v*')" % _path, _path, bit=next(_freeBits)))
 
 # PATMuonProducer on the relinked muons, without the PF candidate (and its ECAL
 # energy), gen match, MET corrections and muon timing, whose inputs are not in
@@ -495,7 +462,10 @@ def _wmassAlcareco(process, skim):
     task = process.alcarecoNanoTaskMC if isMC else process.alcarecoNanoTask
     _useStoredBeamSpot(process, task)
     _replace(process, task, "unpackedPatTrigger", _unpackedPatTrigger.clone())
-    _replace(process, task, "triggerObjectTable", _alcarecoTriggerObjectTable.clone())
+    from PhysicsTools.NanoAOD.alcarecoTriggerObjects_cff import alcarecoTriggerObjectTable
+    from PhysicsTools.NanoAOD.alcareco_l1_cff import l1MuonTable
+    _replace(process, task, "triggerObjectTable", alcarecoTriggerObjectTable.clone())
+    _replace(process, task, "l1MuonTable", l1MuonTable.clone())
     _replace(process, task, "l1bits", _l1bits.clone())
     if skim in _RELINKED_MUONS:
         _muonTablesFromMuons(process, task, isMC, "ALCARECO%sMuons" % skim)
@@ -515,6 +485,18 @@ def nanoAOD_alcarecoWMassTkAlJpsiMuMuCalib(process):
 
 def nanoAOD_alcarecoWMassTkAlUpsilonMuMu(process):
     return nanoAOD_alcareco(process, "TkAlUpsilonMuMu", alcareco="wmass")
+
+
+def nanoAOD_alcarecoL1Stages(process):
+    """Opt in to named initial/intermediate L1 decisions and the BX0 prescale
+    column, after nanoAOD_alcarecoWMass<skim> in the --customise list."""
+    if not hasattr(process, "l1MuonTable") or not process.nanoAOD_step.contains(process.l1MuonTable):
+        raise RuntimeError("nanoAOD_alcarecoL1Stages requires a preceding WMass ALCARECO customization")
+    from PhysicsTools.NanoAOD.alcareco_l1_cff import l1AlgorithmStages
+    isMC = process.nanoAOD_step.contains(process.trackrefitideal)
+    task = process.alcarecoNanoTaskMC if isMC else process.alcarecoNanoTask
+    _replace(process, task, "l1AlgorithmStagesTable", l1AlgorithmStages.clone())
+    return process
 
 
 def nanoAOD_alcarecoFullGen(process):
