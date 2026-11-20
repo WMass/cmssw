@@ -4,7 +4,11 @@ from PhysicsTools.NanoAOD.nano_eras_cff import *
 from PhysicsTools.NanoAOD.common_cff import *
 from PhysicsTools.NanoAOD.simplePATMuonFlatTableProducer_cfi import simplePATMuonFlatTableProducer
 from PhysicsTools.NanoAOD.cvhGenMatch_cfi import cvhMuonGenMatch as _cvhMuonGenMatch
+from PhysicsTools.NanoAOD.cvhGenMatch_cfi import cvhMuonIdealGenMatch as _cvhMuonIdealGenMatch
+from PhysicsTools.NanoAOD.cvhGenMatch_cfi import cvhMuonBSGenMatch as _cvhMuonBSGenMatch
 from PhysicsTools.NanoAOD.cvhGenMatch_cfi import cvhGenPartIdx as _cvhGenPartIdx
+from PhysicsTools.NanoAOD.cvhGenMatch_cfi import cvhidealGenPartIdx as _cvhidealGenPartIdx
+from PhysicsTools.NanoAOD.cvhGenMatch_cfi import cvhbsGenPartIdx as _cvhbsGenPartIdx
 
 import PhysicsTools.PatAlgos.producersLayer1.muonProducer_cfi
 
@@ -314,10 +318,10 @@ muonTable.variables.phi.precision = 16
 # --- CVH single-muon-track refit (WMass custom NanoAOD) --------------------
 # Turns muon inner tracks into reco::Track + pat::Muon association, then runs
 # the CVH refit. `trackrefit` (nominal, real geometry) runs for data and MC;
-# the MC-only `trackrefitideal` (ideal geometry) and `trackrefitbs` (beamspot
-# constraint) variants run too when isMC=True. All share the one EventSetup G4
-# master (cvhMasterESProducer / CvhMasterRecord); coexistence is what Stage A2
-# unblocked. See nanoAOD_addCvhMuonBranches.
+# the MC-only `trackrefitideal` (ideal geometry) runs when isMC=True, and
+# `trackrefitbs` (beamspot constraint) is an optional MC add-on. All share the
+# one EventSetup G4 master (cvhMasterESProducer / CvhMasterRecord); Stage A2
+# unblocked their coexistence. See nanoAOD_addCvhMuonBranches.
 from Analysis.HitAnalyzer.ResidualGlobalCorrectionMakerMuonG4e_cfi import ResidualGlobalCorrectionMakerMuonG4e  # noqa: E402
 
 tracksfrommuons = cms.EDProducer("TrackProducerFromPatMuons",
@@ -433,9 +437,13 @@ def cvhAddBeamspotRefit(process):
     """Add the MC beamspot-constrained single-track refit (trackrefitbs) and its
     Muon_cvhbs* branches. Off by default; nano_cff.nanoAOD_cvhBeamspotRefit
     enables it."""
+    if not hasattr(process, "muonTablesTask") or "cvhGenMatch" not in process.muonTablesTask.moduleNames():
+        raise RuntimeError("cvhAddBeamspotRefit requires the MiniAOD MC CVH customization")
     process.trackrefitbs = trackrefitbs
-    process.muonTablesTask.add(process.trackrefitbs)
+    process.cvhBSGenMatch = _cvhMuonBSGenMatch.clone(src = process.tracksfrommuons.src)
+    process.muonTablesTask.add(process.trackrefitbs, process.cvhBSGenMatch)
     _cvhScalarVars(process.muonTable.externalVariables, "trackrefitbs", "bs", " (beamspot constraint)")
+    process.muonTable.externalVariables.cvhbsGenPartIdx = _cvhbsGenPartIdx.clone()
     # Self-contained set: own index vector.
     vecVars = process.muonExternalVecVarsTable.variables
     vecVars.cvhbsGlobalIdxs = ExtVar(cms.InputTag("trackrefitbs:globalIdxs"), "std::vector<int>", doc="Indices for correction parameters (beamspot constraint)", precision=16)
@@ -491,10 +499,12 @@ def nanoAOD_addCvhMuonBranches(process, initFile=None, isMC=False, useScalarPot3
     if isMC:
         # MC-only ideal-geometry refit + merged nominal/ideal indices.
         process.cvhGenMatch = _cvhMuonGenMatch.clone(src = process.tracksfrommuons.src)
+        process.cvhIdealGenMatch = _cvhMuonIdealGenMatch.clone(src = process.tracksfrommuons.src)
         extVars.cvhGenPartIdx = _cvhGenPartIdx.clone()
+        extVars.cvhidealGenPartIdx = _cvhidealGenPartIdx.clone()
         process.trackrefitideal = trackrefitideal
         process.mergedGlobalIdxs = mergedGlobalIdxs
-        _producers += [process.trackrefitideal, process.mergedGlobalIdxs, process.cvhGenMatch]
+        _producers += [process.trackrefitideal, process.mergedGlobalIdxs, process.cvhGenMatch, process.cvhIdealGenMatch]
         _cvhScalarVars(extVars, "trackrefitideal", "ideal", " (ideal geometry)")
         # Merged nominal+ideal index vector (10_6-tip contract).
         vecVars.cvhmergedGlobalIdxs = ExtVar(cms.InputTag("mergedGlobalIdxs"), "std::vector<int>", doc="Indices for correction parameters (merged nominal+ideal)", precision=16)

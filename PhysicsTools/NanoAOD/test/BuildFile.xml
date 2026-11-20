@@ -21,6 +21,7 @@
   <flags EDM_PLUGIN="1"/>
 </library>
 <test name="test-cvhGenMatch" command="cmsRun ${SCRAM_TEST_PATH}/test_cvhGenMatch_cfg.py"/>
+<test name="test-cvhGenMatch-configuration" command="python3 ${SCRAM_TEST_PATH}/check_cvhGenMatch_configuration.py"/>
 
 <library file="AlcarecoTriggerObjectTestPlugins.cc" name="PhysicsToolsNanoAODAlcarecoTriggerObjectTestPlugins">
   <use name="DataFormats/HLTReco"/>

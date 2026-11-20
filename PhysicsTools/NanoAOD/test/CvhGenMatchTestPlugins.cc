@@ -48,8 +48,10 @@ public:
   explicit CvhGenMatchTestInputProducer(const edm::ParameterSet&) {
     produces<reco::TrackCollection>("tracks");
     produces<pat::MuonCollection>("muons");
-    for (const auto& label : {"trackPt", "trackEta", "trackPhi", "muonPt", "muonEta", "muonPhi"})
-      produces<edm::ValueMap<float>>(label);
+    for (const std::string kind : {"track", "muon"})
+      for (const std::string variant : {"", "Ideal", "BS"})
+        for (const std::string coordinate : {"Pt", "Eta", "Phi"})
+          produces<edm::ValueMap<float>>(kind + variant + coordinate);
     for (int pdgId : species)
       produces<reco::GenParticleCollection>("gen" + std::to_string(pdgId));
   }
@@ -88,12 +90,40 @@ public:
     }
     const auto trackKeys = event.put(std::move(tracks), "tracks");
     const auto muonKeys = event.put(std::move(muons), "muons");
-    putMap(event, trackKeys, pt, "trackPt");
-    putMap(event, trackKeys, eta, "trackEta");
-    putMap(event, trackKeys, phi, "trackPhi");
-    putMap(event, muonKeys, pt, "muonPt");
-    putMap(event, muonKeys, eta, "muonEta");
-    putMap(event, muonKeys, phi, "muonPhi");
+    for (const std::string variant : {"", "Ideal", "BS"}) {
+      auto variantPt = pt;
+      auto variantEta = eta;
+      auto variantPhi = phi;
+      if (!pt.empty() && variant == "Ideal") {
+        // Row 0 has three successful fits with different nearest gen particles.
+        variantEta[0] = 0.06f;
+        // Ideal failure must not fall back to the valid nominal direction.
+        variantPt[1] = -99.f;
+        // Nominal pT/direction failures must not veto a successful ideal fit.
+        for (unsigned row : {2, 3, 4, 5}) {
+          variantPt[row] = 1.f;
+          variantEta[row] = 0.06f;
+          variantPhi[row] = 0.f;
+        }
+      } else if (!pt.empty() && variant == "BS") {
+        variantEta[0] = 1.f;
+        variantPhi[0] = 0.02f;
+        variantEta[1] = 1.f;
+        variantPhi[1] = -0.02f;
+        variantEta[3] = 0.02f;
+        variantPhi[4] = nan;
+        variantPt[5] = 1.f;
+        variantEta[5] = 0.06f;
+        // Both other fits succeed here: validity belongs to the BS fit alone.
+        variantPt[9] = -99.f;
+      }
+      putMap(event, trackKeys, variantPt, "track" + variant + "Pt");
+      putMap(event, trackKeys, variantEta, "track" + variant + "Eta");
+      putMap(event, trackKeys, variantPhi, "track" + variant + "Phi");
+      putMap(event, muonKeys, variantPt, "muon" + variant + "Pt");
+      putMap(event, muonKeys, variantEta, "muon" + variant + "Eta");
+      putMap(event, muonKeys, variantPhi, "muon" + variant + "Phi");
+    }
 
     for (int pdgId : species) {
       auto gen = std::make_unique<reco::GenParticleCollection>();
