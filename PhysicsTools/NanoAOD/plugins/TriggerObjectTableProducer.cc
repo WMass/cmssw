@@ -1,4 +1,6 @@
 // system include files
+#include <array>
+#include <cstdint>
 #include <memory>
 #include <sstream>
 
@@ -10,6 +12,7 @@
 #include "FWCore/Framework/interface/MakerMacros.h"
 
 #include "FWCore/ParameterSet/interface/ParameterSet.h"
+#include "FWCore/Utilities/interface/Exception.h"
 #include "FWCore/Utilities/interface/StreamID.h"
 
 #include "DataFormats/PatCandidates/interface/TriggerObjectStandAlone.h"
@@ -78,7 +81,7 @@ private:
     StringCutObjectSelector<pat::TriggerObjectStandAlone> l1cut, l1cut_2, l2cut;
     float l1DR2, l1DR2_2, l2DR2;
     bool skipObjectsNotPassingQualityBits;
-    StringObjectFunction<pat::TriggerObjectStandAlone> qualityBits;
+    std::vector<std::pair<uint64_t, StringObjectFunction<pat::TriggerObjectStandAlone>>> qualityBitSelections;
     std::string qualityBitsDoc;
 
     SelectedObject(const edm::ParameterSet &pset)
@@ -92,7 +95,6 @@ private:
           l1DR2_2(-1),
           l2DR2(-1),
           skipObjectsNotPassingQualityBits(pset.getParameter<bool>("skipObjectsNotPassingQualityBits")),
-          qualityBits("0"),   //will be overwritten from configuration
           qualityBitsDoc("")  //will be created from configuration
     {
       if (!doc.empty()) {
@@ -100,27 +102,26 @@ private:
       }
       std::vector<edm::ParameterSet> qualityBitsConfig =
           pset.getParameter<std::vector<edm::ParameterSet>>("qualityBits");
-      std::stringstream qualityBitsFunc;
-      std::vector<bool> bits(qualityBitsConfig.size(), false);
+      std::array<bool, 64> bits{};
       for (size_t i = 0; i != qualityBitsConfig.size(); ++i) {
         if (i != 0) {
-          qualityBitsFunc << " + ";
           qualityBitsDoc += ", ";
         }
         unsigned int bit = i;
         if (qualityBitsConfig[i].existsAs<unsigned int>("bit"))
           bit = qualityBitsConfig[i].getParameter<unsigned int>("bit");
-        assert(!bits[bit] && "a quality bit was inserted twice");  // the bit should not have been set already
-        assert(bit < 64 && "quality bits are store on 64 bits");
+        if (bit >= bits.size())
+          throw cms::Exception("Configuration") << "TriggerObjectTableProducer: quality bit " << bit
+                                                << " is outside the supported range [0, 63]";
+        if (bits[bit])
+          throw cms::Exception("Configuration") << "TriggerObjectTableProducer: quality bit " << bit
+                                                << " was configured more than once";
         bits[bit] = true;
-        qualityBitsFunc << std::to_string(1UL << bit) << "*("
-                        << qualityBitsConfig[i].getParameter<std::string>("selection") << ")";
+        qualityBitSelections.emplace_back(
+            uint64_t{1} << bit,
+            StringObjectFunction<pat::TriggerObjectStandAlone>(
+                qualityBitsConfig[i].getParameter<std::string>("selection")));
         qualityBitsDoc += std::to_string(bit) + " => " + qualityBitsConfig[i].getParameter<std::string>("doc");
-      }
-      if (!qualityBitsFunc.str().empty()) {
-        //std::cout << "The quality bit string is :" << qualityBitsFunc.str() << std::endl;
-        //std::cout << "The quality bit documentation is :" << qualityBitsDoc << std::endl;
-        qualityBits = StringObjectFunction<pat::TriggerObjectStandAlone>(qualityBitsFunc.str());
       }
       if (pset.existsAs<std::string>("l1seed")) {
         l1cut = StringCutObjectSelector<pat::TriggerObjectStandAlone>(pset.getParameter<std::string>("l1seed"));
@@ -137,6 +138,17 @@ private:
     }
 
     bool match(const pat::TriggerObjectStandAlone &obj) const { return cut(obj); }
+
+    uint64_t qualityBits(const pat::TriggerObjectStandAlone &obj) const {
+      // Evaluate each predicate separately: summing weighted bits in a double
+      // loses low bits when bits above 52 are set. Keep the mask integer-valued.
+      uint64_t result = 0;
+      for (const auto &selection : qualityBitSelections) {
+        if (selection.second(obj) != 0.)
+          result |= selection.first;
+      }
+      return result;
+    }
   };
 
   std::vector<SelectedObject> sels_;
@@ -348,7 +360,7 @@ void TriggerObjectTableProducer::fillDescriptions(edm::ConfigurationDescriptions
   selection.add<bool>("skipObjectsNotPassingQualityBits")->setComment("flag to skip object on quality bit");
 
   edm::ParameterSetDescription bit;
-  bit.add<std::string>("selection")->setComment("function on pat::TriggerObjectStandAlone to define quality bit");
+  bit.add<std::string>("selection")->setComment("function on pat::TriggerObjectStandAlone; nonzero sets the quality bit");
   bit.add<std::string>("doc")->setComment("definition of the quality bit");
   bit.addOptional<uint>("bit")->setComment("value of the bit, if not the order in the VPset");
   bit.setComment("parameter set to define quality bit of matching object");
