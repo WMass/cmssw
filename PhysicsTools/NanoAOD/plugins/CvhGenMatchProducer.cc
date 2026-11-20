@@ -17,7 +17,7 @@
 #include "FWCore/ParameterSet/interface/ParameterSetDescription.h"
 #include "FWCore/Utilities/interface/Exception.h"
 
-// Match each nominal CVH direction independently. The source collection supplies
+// Match each configured CVH direction independently. The source collection supplies
 // the ValueMap keys; its unrefitted kinematics do not enter the matching.
 template <typename T>
 class CvhGenMatchProducer : public edm::global::EDProducer<> {
@@ -40,7 +40,7 @@ public:
 
   static void fillDescriptions(edm::ConfigurationDescriptions& descriptions) {
     edm::ParameterSetDescription desc;
-    desc.add<edm::InputTag>("src")->setComment("Collection to which the nominal CVH ValueMaps are keyed");
+    desc.add<edm::InputTag>("src")->setComment("Collection to which this refit's CVH ValueMaps are keyed");
     desc.add<edm::InputTag>("matched", edm::InputTag("finalGenParticles"))
         ->setComment("Generator collection in the same order as the GenPart table");
     desc.add<edm::InputTag>("srcPt", edm::InputTag("trackrefit", "corPt"));

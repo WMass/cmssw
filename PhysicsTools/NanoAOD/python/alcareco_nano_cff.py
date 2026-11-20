@@ -60,7 +60,10 @@ from PhysicsTools.NanoAOD.genparticles_cff import genParticleTable as _genPartic
 from PhysicsTools.NanoAOD import muons_cff as _muons
 from PhysicsTools.NanoAOD.cvhGenMatch_cfi import cvhTrackGenMatch as _cvhTrackGenMatch
 from PhysicsTools.NanoAOD.cvhGenMatch_cfi import cvhMuonGenMatch as _cvhMuonGenMatch
+from PhysicsTools.NanoAOD.cvhGenMatch_cfi import cvhTrackIdealGenMatch as _cvhTrackIdealGenMatch
+from PhysicsTools.NanoAOD.cvhGenMatch_cfi import cvhMuonIdealGenMatch as _cvhMuonIdealGenMatch
 from PhysicsTools.NanoAOD.cvhGenMatch_cfi import cvhGenPartIdx as _cvhGenPartIdx
+from PhysicsTools.NanoAOD.cvhGenMatch_cfi import cvhidealGenPartIdx as _cvhidealGenPartIdx
 from RecoVertex.BeamSpotProducer.BeamSpot_cfi import offlineBeamSpot
 from TrackingTools.TransientTrack.TransientTrackBuilder_cfi import TransientTrackBuilderESProducer
 
@@ -152,9 +155,11 @@ muonCvhIdealTable = cms.EDProducer("SimpleTrackFlatTableProducer",
     externalVariables = cms.PSet(),
 )
 _muons._cvhScalarVars(muonCvhIdealTable.externalVariables, "trackrefitideal", "ideal", " (ideal geometry)")
-# This extension is MC-only; the matching uses the NOMINAL refit's direction.
+# This extension is MC-only; each association uses its own refit's direction.
 cvhGenMatch = _cvhTrackGenMatch.clone(src = _tracks)
+cvhIdealGenMatch = _cvhTrackIdealGenMatch.clone(src = _tracks)
 muonCvhIdealTable.externalVariables.cvhGenPartIdx = _cvhGenPartIdx.clone()
+muonCvhIdealTable.externalVariables.cvhidealGenPartIdx = _cvhidealGenPartIdx.clone()
 
 # The Jacobian payload, as muonExternalVecVarsTable of the MiniAOD NanoAOD:
 # data: the nominal refit; MC: the indices merged with the ideal refit's, and
@@ -255,7 +260,7 @@ alcarecoNanoSequence = cms.Sequence(lhcInfoTable, alcarecoNanoTask)
 alcarecoNanoTaskMC = cms.Task(
     nanoMetadata, offlineBeamSpot, trackrefit, trackrefitideal, mergedGlobalIdxs,
     muonIP, muonBSConstrain, muonTable, muonCvhIdealTable, muonExternalVecVarsMCTable,
-    muonCands, finalGenParticles, muonsMCMatchForTable, muonMCTable, cvhGenMatch,
+    muonCands, finalGenParticles, muonsMCMatchForTable, muonMCTable, cvhGenMatch, cvhIdealGenMatch,
     vertexTable, beamSpotTable, puTable, genParticleTable, genTable, genWeightsTable,
     genFilterTable, genVertexTable, genVertexT0Table,
 )
@@ -263,7 +268,7 @@ alcarecoNanoSequenceMC = cms.Sequence(alcarecoNanoTaskMC)
 
 _trackConsumers = ("trackrefit", "trackrefitideal", "muonIP", "muonBSConstrain", "muonTable",
                    "muonCvhIdealTable", "muonExternalVecVarsTable", "muonExternalVecVarsMCTable", "muonCands",
-                   "cvhGenMatch")
+                   "cvhGenMatch", "cvhIdealGenMatch")
 
 
 def nanoAOD_alcareco(process, skim, calib=False, alcareco="central"):
@@ -440,12 +445,14 @@ def _muonTablesFromMuons(process, task, isMC, muons):
     if isMC:
         _muons._cvhScalarVars(table.externalVariables, "trackrefitideal", "ideal", " (ideal geometry)")
         table.externalVariables.cvhGenPartIdx = _cvhGenPartIdx.clone()
+        table.externalVariables.cvhidealGenPartIdx = _cvhidealGenPartIdx.clone()
     _replace(process, task, "muonTable", table)
     if isMC:
         _replace(process, task, "muonExternalVecVarsMCTable", _alcarecoPatMuonVecVarsMCTable.clone(doc = table.doc))
         _replace(process, task, "muonsMCMatchForTable", _alcarecoPatMuonsMCMatch.clone())
         _replace(process, task, "muonMCTable", _alcarecoPatMuonMCTable.clone())
         _replace(process, task, "cvhGenMatch", _cvhMuonGenMatch.clone(src = "alcarecoPatMuons"))
+        _replace(process, task, "cvhIdealGenMatch", _cvhMuonIdealGenMatch.clone(src = "alcarecoPatMuons"))
     else:
         _replace(process, task, "muonExternalVecVarsTable", _alcarecoPatMuonVecVarsTable.clone(doc = table.doc))
 
@@ -515,8 +522,9 @@ def nanoAOD_alcarecoFullGen(process):
 # genMatchedTracks, with their extras, hits and clusters: about 12 tracks per
 # event, of which about 2 are the gun pair (particle and antiparticle) and the
 # rest the pileup tracks in the cone. Track_genPartIdx uses the standard Nano
-# match; Track_cvhGenPartIdx uses the CVH direction with no relative-pT cut. The
-# generator record is the gun pair, and the pileup summary is slimmedAddPileupInfo.
+# match; Track_cvhGenPartIdx and Track_cvhidealGenPartIdx use their respective
+# CVH directions with no relative-pT cut. The generator record is the gun pair,
+# and the pileup summary is slimmedAddPileupInfo.
 # Per species: the refit's particle (mass and, for hadrons, the nuclear-elastic
 # family), the gen match and the table's mass and pdgId. The table is named
 # Track, since it holds pions and kaons too.
@@ -560,6 +568,7 @@ def nanoAOD_alcarecoGun(process, species):
     process.muonCands.particleType = candType
     process.muonsMCMatchForTable.mcPdgId = [pdgId]
     process.cvhGenMatch.mcPdgId = pdgId
+    process.cvhIdealGenMatch.mcPdgId = pdgId
     process.muonMCTable.objName = "Track"
     process.muonMCTable.objType = "Track"
     process.muonMCTable.docString = "MC matching to the status==1 %s gun particles" % species
