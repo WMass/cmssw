@@ -27,7 +27,7 @@
 #include "DataFormats/Math/interface/deltaR.h"
 #include "DataFormats/Common/interface/ValueMap.h"
 #include "DataFormats/Candidate/interface/VertexCompositeCandidate.h"
-#include "DataFormats/RecoCandidate/interface/RecoChargedCandidate.h"
+#include "Analysis/HitAnalyzer/interface/CandidateLegTrack.h"
 
 #include "Math/Vector4Dfwd.h"
 
@@ -52,12 +52,13 @@ namespace {
 // a COMPOSITE daughter is a two-track joint-fit subsystem. These two helpers
 // are the whole of that rule.
 
-// The track behind a leaf daughter, or nullptr if the node is not a leaf
-// charged candidate (i.e. it is composite) or carries a null TrackRef.
+// The track behind a leaf daughter (a RecoChargedCandidate, or a shallow clone of
+// a relinked muon, see CandidateLegTrack.h), or nullptr if the node is composite
+// or carries a null TrackRef.
 const reco::Track* leafTrack(const reco::Candidate* c) {
-  const auto* rcc = dynamic_cast<const reco::RecoChargedCandidate*>(c);
-  if (!rcc || rcc->track().isNull()) return nullptr;
-  return &*rcc->track();
+  const reco::TrackRef r = ana_hitanalyzer::legTrack(c);
+  if (r.isNull()) return nullptr;
+  return &*r;
 }
 
 // The two leaf tracks of a node's first two daughters. Fails (returns false,
@@ -149,12 +150,13 @@ bool compositeProperties(int pdgid, double &mass, double &width, std::string &la
 // Returns false if any leaf is trackless (the candidate is then unusable).
 bool decompose(const reco::Candidate *c, CandidateDecomp &d) {
   if (c == nullptr) return false;
-  const auto *rcc = dynamic_cast<const reco::RecoChargedCandidate *>(c);
-  if (rcc != nullptr) {
-    if (rcc->track().isNull()) return false;
+  if (ana_hitanalyzer::isLeg(c)) {
+    const reco::TrackRef trk = ana_hitanalyzer::legTrack(c);
+    if (trk.isNull()) return false;
+    // the leg's own pdgId: a shallow-clone muon leg carries it like a plain one
     double m = 0., merr = 0.; std::string g4, lab;
-    if (!leafProperties(rcc->pdgId(), m, merr, g4, lab)) return false;
-    d.tracks.push_back(&*rcc->track());
+    if (!leafProperties(c->pdgId(), m, merr, g4, lab)) return false;
+    d.tracks.push_back(&*trk);
     d.masses.push_back(m);
     d.massErrs.push_back(merr);
     d.g4names.push_back(g4);

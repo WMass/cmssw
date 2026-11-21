@@ -24,7 +24,7 @@
 // producer (CandidateLeafTrackProducer) emits parallel `candIdx` / `leafIdx`
 // vectors. So refit track j belongs to candidate candIdx[j], leaf leafIdx[j] --
 // and we assemble, per candidate, the refit track for each leaf position in the
-// SAME canonical leaf ordering `collectLeaves` produces here. A leg with
+// SAME canonical leaf ordering `collectLegs` produces. A leg with
 // refitOk = 0 (or no refit at all) uses its raw track; `nLegsRefit` counts how
 // many legs were substituted.
 //
@@ -48,7 +48,7 @@
 #include "DataFormats/Common/interface/Handle.h"
 #include "DataFormats/Common/interface/ValueMap.h"
 #include "DataFormats/BeamSpot/interface/BeamSpot.h"
-#include "DataFormats/RecoCandidate/interface/RecoChargedCandidate.h"
+#include "Analysis/HitAnalyzer/interface/CandidateLegTrack.h"
 #include "DataFormats/TrackReco/interface/Track.h"
 #include "DataFormats/TrackReco/interface/TrackFwd.h"
 #include "DataFormats/VertexReco/interface/Vertex.h"
@@ -99,21 +99,6 @@ double massForPdgId(int pdgid) {
     case 2212: return 0.9382720813;  // p
     default: return kMuonMass;
   }
-}
-
-// Leaf tracks of a candidate node, depth-first. Mirrors the decomposition the
-// CVH maker (and CandidateLeafTrackProducer's leafIdx) use: a composite daughter
-// recurses, a leaf yields its track.
-void collectLeaves(const reco::Candidate* c,
-                   std::vector<const reco::RecoChargedCandidate*>& out) {
-  if (c == nullptr) return;
-  const auto* rcc = dynamic_cast<const reco::RecoChargedCandidate*>(c);
-  if (rcc != nullptr) {
-    out.push_back(rcc);
-    return;
-  }
-  for (size_t i = 0; i < c->numberOfDaughters(); ++i)
-    collectLeaves(c->daughter(i), out);
 }
 
 // A gen particle whose PDG id carries a b (anti)quark: for mesons the b sits
@@ -461,7 +446,7 @@ void JpsiXKinematicFitProducer::produce(edm::Event& iEvent, const edm::EventSetu
   std::vector<float> genBMass(n, -99.f), genBPt(n, -99.f), genBEta(n, -99.f),
       genBPhi(n, -99.f), genBDR(n, 9.9f);
   std::vector<int> genBPdgId(n, 0), genBIdx(n, -1);
-  // Per-leg generator match. Leg order is the canonical collectLeaves order,
+  // Per-leg generator match. Leg order is the canonical collectLegs order,
   // i.e. the same ordering that fills mu0/mu1/kaon TrackIdx downstream.
   std::array<std::vector<int>, 3> legGenIdx, legGenPdgId, legGenMotherPdgId;
   std::array<std::vector<float>, 3> legGenPt, legGenDR;
@@ -682,8 +667,8 @@ void JpsiXKinematicFitProducer::produce(edm::Event& iEvent, const edm::EventSetu
       }
     }
 
-    std::vector<const reco::RecoChargedCandidate*> leaves;
-    collectLeaves(&cand, leaves);
+    std::vector<const reco::Candidate*> leaves;
+    ana_hitanalyzer::collectLegs(&cand, leaves);
     if (leaves.size() < 3) continue;  // need a dimuon plus at least one bachelor
 
     // Raw per-leaf tracks (stage-1) and the refit substitution (leaf-keyed).
@@ -693,8 +678,9 @@ void JpsiXKinematicFitProducer::produce(edm::Event& iEvent, const edm::EventSetu
     int nRefit = 0;
     const auto& refMap = refitByCand[ic];
     for (size_t il = 0; il < leaves.size(); ++il) {
-      if (leaves[il]->track().isNull()) { badleg = true; break; }
-      const reco::Track* raw = &(*leaves[il]->track());
+      const reco::TrackRef legTrk = ana_hitanalyzer::legTrack(leaves[il]);
+      if (legTrk.isNull()) { badleg = true; break; }
+      const reco::Track* raw = &(*legTrk);
       rawTrk.push_back(raw);
       auto it = refMap.find(static_cast<int>(il));
       if (it != refMap.end()) { refTrk.push_back(it->second); ++nRefit; }
@@ -710,7 +696,7 @@ void JpsiXKinematicFitProducer::produce(edm::Event& iEvent, const edm::EventSetu
       matched.reserve(3);
       const size_t nLeg = std::min<size_t>(3, leaves.size());
       for (size_t il = 0; il < nLeg; ++il) {
-        const reco::RecoChargedCandidate& leg = *leaves[il];
+        const reco::Candidate& leg = *leaves[il];
         const reco::GenParticle* best = nullptr;
         int bestIdx = -1;
         double bestDR = 1e9;

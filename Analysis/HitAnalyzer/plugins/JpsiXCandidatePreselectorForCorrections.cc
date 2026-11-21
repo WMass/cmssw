@@ -50,7 +50,7 @@
 #include "DataFormats/Candidate/interface/VertexCompositeCandidateFwd.h"
 #include "DataFormats/Common/interface/Handle.h"
 #include "DataFormats/Common/interface/ValueMap.h"
-#include "DataFormats/RecoCandidate/interface/RecoChargedCandidate.h"
+#include "Analysis/HitAnalyzer/interface/CandidateLegTrack.h"
 
 #include "FWCore/Framework/interface/Event.h"
 #include "FWCore/Framework/interface/Frameworkfwd.h"
@@ -63,18 +63,6 @@
 namespace ana_hitanalyzer {
 
 namespace {
-void collectLeaves(const reco::Candidate* c,
-                   std::vector<const reco::RecoChargedCandidate*>& out) {
-  if (c == nullptr) return;
-  const auto* rcc = dynamic_cast<const reco::RecoChargedCandidate*>(c);
-  if (rcc != nullptr) {
-    out.push_back(rcc);
-    return;
-  }
-  for (size_t i = 0; i < c->numberOfDaughters(); ++i)
-    collectLeaves(c->daughter(i), out);
-}
-
 // Cut names in the order they are applied, for the end-of-job cutflow. Keep in
 // sync with the `fail(k)` indices in produce().
 const char* const kCutNames[] = {"input",     "fitOk",      "massWindow",
@@ -162,8 +150,8 @@ public:
 
       // Kinematics from the stage-1 leaves (raw track-based four-vectors; the
       // candidate's own p4 is a raw sum by design).
-      std::vector<const reco::RecoChargedCandidate*> leaves;
-      collectLeaves(&(*candH)[ic], leaves);
+      std::vector<const reco::Candidate*> leaves;
+      ana_hitanalyzer::collectLegs(&(*candH)[ic], leaves);
 
       // A candidate with fewer than three leaves is not a J/psi + bachelor and
       // fails here rather than dropping out uncounted -- so the cutflow's
