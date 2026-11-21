@@ -44,6 +44,8 @@
 # For the ALCARECO of WMass/cmssw#54 (trigger objects, relinked muons, MiniAOD
 # generator record), the customise nanoAOD_alcarecoWMass<skim>[Calib], see
 # _wmassAlcareco.
+# For the B+ -> J/psi K+ candidates of the #54 TkAlJpsiX, the customise
+# nanoAOD_alcarecoWMassTkAlJpsiX[Calib], see nanoAOD_alcarecoJpsiX.
 # For the MuKPiGun gun ALCARECO (MC, table named Track), see nanoAOD_alcarecoGun:
 #   cmsDriver.py NANO -s NANO:PhysicsTools/NanoAOD/alcareco_nano_cff.alcarecoNanoSequenceMC \
 #       --customise PhysicsTools/NanoAOD/alcareco_nano_cff.nanoAOD_alcareco{MuGun,PiGun,KGun,PGun} ...
@@ -125,6 +127,7 @@ def _trackTableVariables(**speciesVars):
         VXBS_Cov03 = _muonVar("VXBS_Cov03", "covariance(0,3)"),
         VXBS_Cov33 = _muonVar("VXBS_Cov33", "covariance(3,3)"),
     )
+
 
 muonTable = cms.EDProducer("SimpleTrackFlatTableProducer",
     src = _tracks,
@@ -375,7 +378,7 @@ from PhysicsTools.NanoAOD.triggerObjects_cff import l1bits as _l1bits
 from PhysicsTools.NanoAOD.genparticles_cff import genIso as _genIso
 
 # the skims whose ALCARECO keeps the relinked muons of their tracks
-_RELINKED_MUONS = ("TkAlJpsiMuMu",)
+_RELINKED_MUONS = ("TkAlJpsiMuMu", "TkAlJpsiX")
 
 # PATMuonProducer on the relinked muons, without the PF candidate (and its ECAL
 # energy), gen match, MET corrections and muon timing, whose inputs are not in
@@ -532,6 +535,342 @@ def nanoAOD_alcarecoFullGen(process):
     return process
 
 
+# --- B+ -> J/psi K+ in the TkAlJpsiX of WMass/cmssw#54 -------------------------------
+# The TkAlJpsiX ALCARECO of WMass/cmssw#54 keeps, beyond the event content read by
+# _wmassAlcareco: per channel the stage-1 candidates (ALCARECOTkAlJpsiX<channel>
+# Resonances, VertexCompositeCandidates whose daughter(0) is the J/psi composite and
+# whose other daughters are the hadron legs; the muon legs are shallow clones of the
+# relinked muons), the leaf tracks of all channels in one collection
+# (ALCARECOTkAlJpsiX) with their dE/dx, and the relinked muons (ALCARECOTkAlJpsiXMuons).
+# The plain RecoChargedCandidate muon legs of the earlier #54 builds are read too.
+# nanoAOD_alcarecoWMassTkAlJpsiX writes, on top of the event tables of _wmassAlcareco:
+#   * Muon: the relinked muons, as for TkAlJpsiMuMu (_muonTablesFromMuons);
+#   * Track: every stored track, with the track columns of the Muon table on the
+#     tracks (no CVH refit), the dE/dx and the row of the track's muon;
+#   * BToJpsiK: the B+ candidates with
+#       - the joint CVH fit of all three legs (cvh*): common vertex, J/psi mass
+#         constraint, each leg with the mass hypothesis of its pdgId, the vertex
+#         geometry, and the reference-point Jacobian (the content from which the
+#         corrections are applied) as vector columns, as Muon_cvhJacRef;
+#       - the Kalman vertex fit of the raw dimuon (kvfDimuon*), and with
+#         kvfColumns=True also that of the raw B (kvf*);
+#       - the rows of the legs in Muon and Track and, in MC, the generator match
+#         (gen*, the legs' gen*), indices into GenPart;
+#   * MC: GenPart keeps the full decay trees of the b hadrons, at full precision.
+# calib=True (nanoAOD_alcarecoWMassTkAlJpsiXCalib) adds the content from which the
+# corrections are derived, as calib=True does for the J/psi: the gradient, the factored
+# Hessian and the mass Jacobians of the joint fit with the J/psi and the B mass
+# constraints, and the parameter catalog in the Runs tree (CvhParm_*).
+# The joint fit takes the hit treatment of the J/psi calibration's two-track maker and
+# the correction model, field and seed handling of trackrefit (_cvhCopyRefitSetup in
+# nanoAOD_customizeCommon).
+from Analysis.HitAnalyzer.ResidualGlobalCorrectionMakerDiMuonG4e_cfi import ResidualGlobalCorrectionMakerDiMuonG4e as _twoTrackMaker
+
+_JPSIX_SKIM = "TkAlJpsiX"
+_JPSIX_TRACKS = "ALCARECOTkAlJpsiX"
+_JPSIX_MUONS = "ALCARECOTkAlJpsiXMuons"
+# channel: (candidates, table name, description, module-label prefix, hadron leg)
+_JPSIX_CHANNELS = {
+    "BPlus": ("ALCARECOTkAlJpsiXBPlusResonances", "BToJpsiK", "B+ -> J/psi K+", "bToJpsiK", "Kaon"),
+}
+# Refits that nano_cff.setup3DFieldForRefit does not know, (label, seed): they take
+# the correction model and field of trackrefit after it has run.
+_EXTRA_CVH_REFITS = (("bToJpsiKCvh", 523456789),)
+# Width of the B mass constraint (the all-constraints pass), GeV. Not the natural
+# width (~4e-13): far below the ~20 MeV resolution, so effectively hard, but
+# numerically sane. The J/psi constraint keeps its natural width (9.29e-5, the
+# maker's composite table), as in all B+ CVH fits so far; the J/psi calibration
+# (calib=True above) uses 1e-5.
+_BMASS_CONSTRAINT_WIDTH = 1e-3
+
+_jpsiXTrackIP = muonIP.clone(src = _JPSIX_TRACKS)
+_jpsiXTrackMuonIdx = cms.EDProducer("TrackToMuonIndexProducer",
+    trackSrc = cms.InputTag(_JPSIX_TRACKS),
+    association = cms.InputTag(_JPSIX_MUONS, "trackToMuon"),
+    originalIndex = cms.InputTag(""),
+    pvSrc = cms.InputTag(""),
+)
+# The primary vertex a track belongs to (the vertex track association is keyed to
+# generalTracks; originalIndex bridges the stored tracks to it), and the impact
+# parameters wrt that vertex, as in the B+ NanoAOD of runCvhBplusJpsiK.py. For a
+# track of a displaced B in a pileup event this is not always the leading vertex
+# of dxy/dz.
+_jpsiXTrackPvIdx = cms.EDProducer("TrackToVertexIndexProducer",
+    trackSrc = cms.InputTag(_JPSIX_TRACKS),
+    association = cms.InputTag("offlinePrimaryVertices"),
+    originalIndex = cms.InputTag(_JPSIX_TRACKS, "originalIndex"),
+    pvSrc = cms.InputTag("offlinePrimaryVertices"),
+)
+_jpsiXTrackPvIP = cms.EDProducer("TrackImpactParameterProducer",
+    trackSrc = cms.InputTag(_JPSIX_TRACKS),
+    pvSrc = cms.InputTag("offlinePrimaryVertices"),
+    pvIdx = cms.InputTag("jpsiXTrackPvIdx"),
+    sentinel = cms.double(-99.),
+)
+_ev = muonTable.externalVariables
+_jpsiXTrackTable = cms.EDProducer("SimpleTrackFlatTableProducer",
+    src = cms.InputTag(_JPSIX_TRACKS),
+    cut = cms.string(""),
+    name = cms.string("Track"),
+    doc = cms.string("tracks of the TkAlJpsiX candidates of all channels (%s)" % _JPSIX_TRACKS),
+    singleton = cms.bool(False),
+    extension = cms.bool(False),
+    variables = _trackTableVariables(),
+    externalVariables = cms.PSet(
+        **{v: getattr(_ev, v).clone(src = cms.InputTag("jpsiXTrackIP", v))
+           for v in ("dxy", "dxyErr", "dz", "dzErr", "dxybs", "dxybsErr", "ip3d", "sip3d")},
+        dedxHarmonic2 = ExtVar(cms.InputTag(_JPSIX_TRACKS + "DeDxHarmonic2"), float, doc="dE/dx, harmonic-2 estimator of the strip hits", precision=10),
+        dedxPixelHarmonic2 = ExtVar(cms.InputTag(_JPSIX_TRACKS + "DeDxPixelHarmonic2"), float, doc="dE/dx, harmonic-2 estimator of the pixel hits", precision=10),
+        dedxAllHarmonic2 = ExtVar(cms.InputTag(_JPSIX_TRACKS + "DeDxAllHarmonic2"), float, doc="dE/dx, harmonic-2 estimator of the strip and pixel hits", precision=10),
+        muonIdx = ExtVar(cms.InputTag("jpsiXTrackMuonIdx"), "int16", doc="row in Muon of the muon of this track (-1 = none)"),
+        pvIdx = ExtVar(cms.InputTag("jpsiXTrackPvIdx"), "int16", doc="index in offlinePrimaryVertices of the vertex this track belongs to (-1 = none)"),
+        d0 = ExtVar(cms.InputTag("jpsiXTrackPvIP", "d0"), float, doc="transverse impact parameter wrt the vertex of pvIdx (-99 = none)", precision=10),
+        d0Err = ExtVar(cms.InputTag("jpsiXTrackPvIP", "d0Err"), float, doc="uncertainty of d0, track and vertex", precision=10),
+        dzPV = ExtVar(cms.InputTag("jpsiXTrackPvIP", "dzPV"), float, doc="longitudinal impact parameter wrt the vertex of pvIdx (-99 = none)", precision=10),
+        dzPVErr = ExtVar(cms.InputTag("jpsiXTrackPvIP", "dzPVErr"), float, doc="uncertainty of dzPV, track and vertex", precision=10),
+    ),
+)
+_jpsiXTrackTable.variables.normChi2 = Var("normalizedChi2()", float, doc="chi2/ndof of the track fit", precision=10)
+_jpsiXTrackTable.variables.nPixelLayers = Var("hitPattern().pixelLayersWithMeasurement()", "int16", doc="pixel layers with measurement")
+
+
+def _jpsiXChannel(process, task, isMC, channel, calib, kvfColumns):
+    """The candidate modules and tables of one TkAlJpsiX channel."""
+    cands, name, desc, prefix, hadron = _JPSIX_CHANNELS[channel]
+    candTag = cms.InputTag(cands)
+    fit, cvh, geom, legs = prefix + "Fit", prefix + "Cvh", prefix + "VtxGeom", prefix + "LegIdx"
+
+    # Kalman vertex fits of the raw tracks (the B with the J/psi mass constraint, and
+    # the dimuon without it), and the generator match: the matching rules follow
+    # runCvhBplusJpsiK.py (dR < 0.02, no relative-pT window, all legs to one ancestor).
+    _replace(process, task, fit, cms.EDProducer("JpsiXKinematicFitProducer",
+        src = candTag,
+        refitLegs = cms.VPSet(),
+        jpsiConstraint = cms.string("inFit"),
+        jpsiMass = cms.double(3.0969),
+        maxChi2 = cms.double(-1.),
+        beamSpot = cms.InputTag("offlineBeamSpot"),
+        primaryVertices = cms.InputTag("offlinePrimaryVertices"),
+        genParticles = cms.InputTag("finalGenParticles" if isMC else ""),
+        genLegMaxDR = cms.untracked.double(0.02),
+        genLegMaxRelDPt = cms.untracked.double(1e9),
+        genAncestorMaxDepth = cms.untracked.uint32(10),
+    ))
+
+    # The joint N-track CVH fit: the J/psi calibration's two-track maker, as an
+    # N-track maker on the candidates
+    joint = cms.EDProducer("ResidualGlobalCorrectionMakerNTrackG4e", **_twoTrackMaker.parameters_())
+    joint.src = cms.InputTag(_JPSIX_TRACKS)
+    joint.srcCandidates = candTag
+    joint.bCandIdxSrc = cms.InputTag("")
+    joint.doVtxConstraint = True
+    joint.bsConstraint = False
+    joint.doMassConstraint = True
+    # the J/psi width of the candidate path is the maker's natural width; these two
+    # set the pair fit of a candidate-less input, which does not occur here
+    joint.massConstraint = 3.0969
+    joint.massConstraintWidth = 9.29e-5
+    joint.motherConstraintWidth = cms.double(_BMASS_CONSTRAINT_WIDTH)
+    joint.gradsPass = cms.string("allcons")
+    joint.produceValueMaps = True
+    joint.fillTrackTree = False
+    joint.fillJac = False
+    joint.fillGrads = False
+    joint.fillGradsFactored = cms.untracked.bool(calib)
+    joint.emitRefJacobian = cms.bool(True)
+    joint.produceCatalog = cms.bool(calib)
+    joint.outprefix = cms.untracked.string("globalcor_" + prefix)
+    _replace(process, task, cvh, joint)
+    if hasattr(process, "cvhMasterESProducer"):
+        # nanoAOD_customizeCommon has run already
+        from PhysicsTools.NanoAOD.nano_cff import _cvhCopyRefitSetup
+        _cvhCopyRefitSetup(process, cvh, dict(_EXTRA_CVH_REFITS)[cvh])
+
+    def vertexGeometry(src, blockPrefix, fitOk):
+        return cms.EDProducer("CandidateVertexGeometryProducer",
+            srcCandidates = candTag,
+            vertexSrc = cms.InputTag(src),
+            blockPrefix = cms.string(blockPrefix),
+            fitOk = fitOk,
+            beamSpot = cms.InputTag("offlineBeamSpot"),
+            primaryVertices = cms.InputTag("offlinePrimaryVertices"),
+        )
+    _replace(process, task, geom, vertexGeometry(cvh, "", cms.InputTag(cvh, "fitOk")))
+    _replace(process, task, legs, cms.EDProducer("CandidateLeafTrackIndexProducer",
+        src = candTag,
+        trackSrc = cms.InputTag(_JPSIX_TRACKS),
+        muonSrc = cms.InputTag(_JPSIX_MUONS),
+        muonAssociation = cms.InputTag(_JPSIX_MUONS, "trackToMuon"),
+    ))
+
+    def ext(src, kind, doc, precision=None):
+        if precision is None:
+            return ExtVar(src, kind, doc=doc)
+        return ExtVar(src, kind, doc=doc, precision=precision)
+    ev = cms.PSet(
+        # rows of the legs; leg order is the candidate's: the two muons of the J/psi,
+        # then the hadron
+        mu0Idx = ext(cms.InputTag(legs, "mu0MuonIdx"), "int16", "row in Muon of the first muon leg (-1 = none)"),
+        mu1Idx = ext(cms.InputTag(legs, "mu1MuonIdx"), "int16", "row in Muon of the second muon leg (-1 = none)"),
+        mu0TrackIdx = ext(cms.InputTag(legs, "mu0TrackIdx"), "int16", "row in Track of the first muon leg"),
+        mu1TrackIdx = ext(cms.InputTag(legs, "mu1TrackIdx"), "int16", "row in Track of the second muon leg"),
+    )
+    setattr(ev, hadron.lower() + "Idx", ext(cms.InputTag(legs, "bach0TrackIdx"), "int16", "row in Track of the %s leg" % hadron.lower()))
+    # the joint CVH fit
+    for col, src, kind, doc in (
+            ("cvhMass", "motherMass", float, "mass, J/psi-constrained pass (the measurement)"),
+            ("cvhMassErr", "motherMassErr", float, "mass uncertainty, J/psi-constrained pass"),
+            ("cvhPt", "motherPt", float, "pt, J/psi-constrained pass"),
+            ("cvhEta", "motherEta", float, "eta, J/psi-constrained pass"),
+            ("cvhPhi", "motherPhi", float, "phi, J/psi-constrained pass"),
+            ("cvhConsMass", "motherConsMass", float, "mass with the B mass constraint applied as well (not a measurement)"),
+            ("cvhJpsiMass", "corMass", float, "dimuon mass, J/psi-constrained pass (pinned by the constraint, not a measurement)"),
+            ("cvhJpsiMassErr", "corMassErr", float, "dimuon mass uncertainty, J/psi-constrained pass"),
+            ("cvhJpsiPt", "corPt", float, "dimuon pt, J/psi-constrained pass"),
+            ("cvhJpsiEta", "corEta", float, "dimuon eta, J/psi-constrained pass"),
+            ("cvhJpsiPhi", "corPhi", float, "dimuon phi, J/psi-constrained pass"),
+            ("cvhChi2", "chisq", float, "chi2"),
+            ("cvhNdof", "ndof", float, "number of degrees of freedom"),
+            ("cvhEdmvalRef", "edmvalRef", float, "estimated distance to minimum in the reference parametrization (converged: < 1e-5)"),
+            ("cvhNiter", "niter", "int16", "iterations"),
+            ("cvhFitOk", "fitOk", "int16", "1 = the fit completed (not a quality flag; cut on cvhEdmvalRef and cvhChi2)"),
+            ("cvhVtxX", "vtxX", float, "common vertex x"),
+            ("cvhVtxY", "vtxY", float, "common vertex y"),
+            ("cvhVtxZ", "vtxZ", float, "common vertex z"),
+            ("cvhVtxCovXX", "vtxCovXX", float, "common vertex covariance xx"),
+            ("cvhVtxCovXY", "vtxCovXY", float, "common vertex covariance xy"),
+            ("cvhVtxCovXZ", "vtxCovXZ", float, "common vertex covariance xz"),
+            ("cvhVtxCovYY", "vtxCovYY", float, "common vertex covariance yy"),
+            ("cvhVtxCovYZ", "vtxCovYZ", float, "common vertex covariance yz"),
+            ("cvhVtxCovZZ", "vtxCovZZ", float, "common vertex covariance zz")):
+        setattr(ev, col, ext(cms.InputTag(cvh, src), kind, "joint CVH fit: " + doc, -1 if kind is float else None))
+    for col, src, doc in (("cvhAlphaBS", "alphaBS", "pointing angle in the transverse plane wrt the beam spot"),
+                          ("cvhLxy", "lxy", "transverse flight distance from the beam spot"),
+                          ("cvhSxy", "sxy", "significance of cvhLxy"),
+                          ("cvhL3d", "l3d", "3D flight distance from the closest-z primary vertex"),
+                          ("cvhSl3d", "sl3d", "significance of cvhL3d"),
+                          ("cvhAlpha3dPV", "alpha3dPV", "3D pointing angle wrt that primary vertex")):
+        setattr(ev, col, ext(cms.InputTag(geom, src), float, "joint CVH fit: " + doc, 12))
+    for i, leg in enumerate(("Mu0", "Mu1", hadron)):
+        for var, prec in (("Pt", -1), ("Eta", 12), ("Phi", 12)):
+            setattr(ev, "cvh%s%s" % (leg, var), ext(cms.InputTag(cvh, "leg%d%s" % (i, var)), float,
+                    "joint CVH fit: %s leg %s, J/psi-constrained pass" % (leg, var.lower()), prec))
+    # the Kalman vertex fits of the raw tracks
+    for col, src, doc in (("kvfDimuonMass", "rawDimuonMass", "dimuon mass (no mass constraint)"),
+                          ("kvfDimuonMassErr", "rawDimuonMassErr", "dimuon mass uncertainty"),
+                          ("kvfDimuonVtxProb", "rawDimuonVtxProb", "dimuon vertex probability"),
+                          ("kvfDimuonAlphaBS", "rawDimuonAlphaBS", "dimuon pointing angle in the transverse plane wrt the beam spot"),
+                          ("kvfDimuonSxy", "rawDimuonSxy", "dimuon transverse flight significance wrt the beam spot"),
+                          ("kvfDimuonSl3d", "rawDimuonSl3d", "dimuon 3D flight significance wrt the closest-z primary vertex")):
+        setattr(ev, col, ext(cms.InputTag(fit, src), float, "Kalman vertex fit of the raw muon tracks: " + doc, -1))
+    if kvfColumns:
+        kvfGeom = prefix + "VtxGeomKvf"
+        _replace(process, task, kvfGeom, vertexGeometry(fit, "raw", cms.InputTag(fit, "rawFitOk")))
+        for col, src, doc in (("kvfMass", "rawFitMass", "mass"), ("kvfMassErr", "rawFitMassErr", "mass uncertainty"),
+                              ("kvfPt", "rawFitPt", "pt"), ("kvfVtxChi2", "rawFitVtxChi2", "vertex chi2"),
+                              ("kvfVtxProb", "rawFitVtxProb", "vertex probability")):
+            setattr(ev, col, ext(cms.InputTag(fit, src), float, "Kalman vertex fit of the raw tracks, J/psi mass constraint: " + doc, -1))
+        setattr(ev, "kvfOk", ext(cms.InputTag(fit, "rawFitOk"), "int16", "1 = the Kalman vertex fit of the raw tracks succeeded"))
+        for col, src in (("kvfAlphaBS", "alphaBS"), ("kvfLxy", "lxy"), ("kvfSxy", "sxy"), ("kvfL3d", "l3d"),
+                         ("kvfSl3d", "sl3d"), ("kvfAlpha3dPV", "alpha3dPV")):
+            setattr(ev, col, ext(cms.InputTag(kvfGeom, src), float, "Kalman vertex fit of the raw tracks: " + src, 12))
+    if isMC:
+        for col, src, kind, doc in (("genPartIdx", "genBIdx", "int16", "row in GenPart of the closest last-copy b hadron (-1 = none; not a truth match, see the legs)"),
+                                    ("genPdgId", "genBPdgId", int, "pdgId of that b hadron (0 = none)"),
+                                    ("genDR", "genBDR", float, "dR(candidate, that b hadron)"),
+                                    ("genAncestorIdx", "genAncestorIdx", "int16", "row in GenPart of the common ancestor of all matched legs (-1 = none)"),
+                                    ("genAncestorPdgId", "genAncestorPdgId", int, "pdgId of that ancestor (0 = none): the truth category"),
+                                    ("nLegsGenMatched", "nLegsGenMatched", "int16", "number of legs with a generator match (the ancestor requires all)")):
+            setattr(ev, col, ext(cms.InputTag(fit, src), kind, doc, -1 if kind is float else None))
+        for i, leg in enumerate(("mu0", "mu1", hadron.lower())):
+            for col, src, kind, doc in (("GenPartIdx", "GenIdx", "int16", "row in GenPart of the status-1 particle of the leg's charge within dR < 0.02 of it, nearest first (-1 = none)"),
+                                        ("GenPdgId", "GenPdgId", int, "pdgId of that particle (0 = none)"),
+                                        ("GenMotherPdgId", "GenMotherPdgId", int, "pdgId of its mother (0 = none)"),
+                                        ("GenDR", "GenDR", float, "dR(leg, that particle)")):
+                setattr(ev, leg + col, ext(cms.InputTag(fit, "leg%d%s" % (i, src)), kind, doc, -1 if kind is float else None))
+
+    _replace(process, task, prefix + "Table", cms.EDProducer("SimpleVertexCompositeCandidateFlatTableProducer",
+        src = candTag,
+        cut = cms.string(""),
+        name = cms.string(name),
+        doc = cms.string("%s candidates of the TkAlJpsiX ALCARECO (%s)" % (desc, cands)),
+        singleton = cms.bool(False),
+        extension = cms.bool(False),
+        variables = cms.PSet(
+            pt = Var("pt", float, doc="pt, sum of the stored legs", precision=-1),
+            eta = Var("eta", float, doc="eta, sum of the stored legs", precision=12),
+            phi = Var("phi", float, doc="phi, sum of the stored legs", precision=12),
+            mass = Var("mass", float, doc="mass, sum of the stored legs", precision=-1),
+            charge = Var("charge", "int16", doc="charge"),
+            vertexChi2 = Var("vertexChi2", float, doc="chi2 of the stage-1 vertex fit", precision=10),
+        ),
+        externalVariables = ev,
+    ))
+
+    # vector columns of the same table: the reference-point Jacobian of the joint fit,
+    # and with calib the global-fit payload
+    vec = cms.PSet(
+        cvhGlobalIdxs = ExtVar(cms.InputTag(cvh, "globalIdxs"), "std::vector<int>", doc="global correction-parameter indices", precision=16),
+        cvhJacRefVtx = ExtVar(cms.InputTag(cvh, "jacRefVtx"), "std::vector<float>", doc="d(common vertex xyz)/d(globalparms), 3 x nParms row-major", precision=12),
+    )
+    for i, leg in enumerate(("Mu0", "Mu1", hadron)):
+        setattr(vec, "cvhJacRef" + leg, ExtVar(cms.InputTag(cvh, "jacRefLeg%d" % i), "std::vector<float>",
+                doc="d(%s leg qop, lambda, phi)/d(globalparms), 3 x nParms row-major" % leg, precision=12))
+    if calib:
+        vec.cvhGrad = ExtVar(cms.InputTag(cvh, "grad"), "std::vector<float>", doc="d(objective)/d(globalparms) at cvhGlobalIdxs, J/psi and B mass constraints", precision=-1)
+        vec.cvhHessFactor = ExtVar(cms.InputTag(cvh, "hessFactor"), "std::vector<float>", doc="factored Hessian B (row-major nRank x nParms), J/psi and B mass constraints", precision=-1)
+        vec.cvhJacMass = ExtVar(cms.InputTag(cvh, "motherJacMass"), "std::vector<float>", doc="d(mass)/d(globalparms)", precision=-1)
+        vec.cvhJpsiJacMass = ExtVar(cms.InputTag(cvh, "jpsiJacMass"), "std::vector<float>", doc="d(dimuon mass)/d(globalparms)", precision=-1)
+    _replace(process, task, prefix + "VecVarsTable", cms.EDProducer("FlattenedCandValueMapVectorTableProducer",
+        name = cms.string(name),
+        src = candTag,
+        cut = cms.string(""),
+        doc = cms.string("joint CVH fit payload of the %s candidates" % desc),
+        variables = vec,
+    ))
+    if calib:
+        setattr(process, prefix + "ParmCatalogTable", _calibParmCatalogTable.clone(src = cms.InputTag(cvh, "catalog")))
+        # on the path, not in the task (see nanoAOD_alcareco)
+        process.nanoAOD_step += getattr(process, prefix + "ParmCatalogTable")
+
+
+def nanoAOD_alcarecoJpsiX(process, channel="BPlus", calib=False, kvfColumns=False):
+    """The TkAlJpsiX ALCARECO of WMass/cmssw#54, channel `channel` (BPlus): the
+    #54 J/psi content with the Muon table of the relinked muons, the Track table and
+    the candidate table (see above). calib=True adds the global-fit payload of the
+    joint fit and the parameter catalog; kvfColumns=True the Kalman vertex fit of the
+    raw B."""
+    if channel not in _JPSIX_CHANNELS:
+        raise RuntimeError("nanoAOD_alcarecoJpsiX: unknown channel %r (expected one of %s)"
+                           % (channel, ", ".join(sorted(_JPSIX_CHANNELS))))
+    nanoAOD_alcareco(process, _JPSIX_SKIM, alcareco="wmass")
+    isMC = _isMC(process)
+    task = process.alcarecoNanoTaskMC if isMC else process.alcarecoNanoTask
+    _replace(process, task, "jpsiXTrackIP", _jpsiXTrackIP.clone())
+    _replace(process, task, "jpsiXTrackMuonIdx", _jpsiXTrackMuonIdx.clone())
+    _replace(process, task, "jpsiXTrackPvIdx", _jpsiXTrackPvIdx.clone())
+    _replace(process, task, "jpsiXTrackPvIP", _jpsiXTrackPvIP.clone())
+    _replace(process, task, "jpsiXTrackTable", _jpsiXTrackTable.clone())
+    if isMC:
+        # the b-hadron decay trees, which the MiniAOD pruning cuts after the first
+        # daughters: the legs' generator particles must be in GenPart
+        process.finalGenParticles.select.append("keep++ (500 < abs(pdgId) < 600) || (5000 < abs(pdgId) < 6000)")
+    _jpsiXChannel(process, task, isMC, channel, calib, kvfColumns)
+    return process
+
+
+def nanoAOD_alcarecoWMassTkAlJpsiX(process):
+    return nanoAOD_alcarecoJpsiX(process, "BPlus")
+
+
+def nanoAOD_alcarecoWMassTkAlJpsiXCalib(process):
+    return nanoAOD_alcarecoJpsiX(process, "BPlus", calib=True)
+
+
+def _isJpsiX(process):
+    return any(hasattr(process, label) for label, _ in _EXTRA_CVH_REFITS)
+
+
 # --- single-particle gun ALCARECO (MuKPiGun UL16, WMass/WMassNanoProduction#38) --
 # The gun ALCARECO keeps the tracks matched to the gun particles (dR < 0.3) as
 # genMatchedTracks, with their extras, hits and clusters: about 12 tracks per
@@ -626,12 +965,19 @@ def nanoAOD_customizeCommon(process):
     full-precision gen leptons of the MiniAOD NanoAOD (nanoGenWmassCustomize).
     MC is the sequence alcarecoNanoSequenceMC, which runs the ideal-geometry
     refit. For the gun ALCARECO, the gun particles (pions and kaons too) get
-    full-precision pt, eta and phi as well."""
-    from PhysicsTools.NanoAOD.nano_cff import setup3DFieldForRefit, customizeGenLeptonPrecision
+    full-precision pt, eta and phi as well, and so does every particle of the
+    TkAlJpsiX GenPart (the legs' generator match, redone offline). The refits
+    that setup3DFieldForRefit does not know (_EXTRA_CVH_REFITS) take the
+    correction model, field and seed handling of trackrefit."""
+    from PhysicsTools.NanoAOD.nano_cff import setup3DFieldForRefit, customizeGenLeptonPrecision, _cvhCopyRefitSetup
     isMC = _isMC(process)
     if isMC:
         process = customizeGenLeptonPrecision(process)
-        if _isGun(process):
+        if _isGun(process) or _isJpsiX(process):
             for var in ("pt", "eta", "phi"):
                 getattr(process.genParticleTable.variables, var).precision = cms.string("-1")
-    return setup3DFieldForRefit(process, useScalarPot3D=not isMC)
+    process = setup3DFieldForRefit(process, useScalarPot3D=not isMC)
+    for label, seed in _EXTRA_CVH_REFITS:
+        if hasattr(process, label):
+            _cvhCopyRefitSetup(process, label, seed)
+    return process
