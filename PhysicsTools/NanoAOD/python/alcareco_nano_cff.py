@@ -101,19 +101,17 @@ def _muonExtVar(name, src):
 
 _v = _muons.muonTable.variables
 _e = _muons.muonTable.externalVariables
-muonTable = cms.EDProducer("SimpleTrackFlatTableProducer",
-    src = _tracks,
-    cut = cms.string(""),
-    name = cms.string("Muon"),
-    doc = cms.string("AlCaReco muon tracks (ALCARECO%s)" % _DEFAULT_SKIM),
-    singleton = cms.bool(False),
-    extension = cms.bool(False),
-    variables = cms.PSet(
+
+
+def _trackTableVariables(**speciesVars):
+    """The columns of the MiniAOD NanoAOD's Muon table that a track determines, for a
+    table on reco::Tracks; `speciesVars` (the mass and pdgId of a species
+    hypothesis) follow phi."""
+    return cms.PSet(
         pt = _v.pt.clone(),
         eta = _v.eta.clone(),
         phi = _v.phi.clone(),
-        mass = _muonVar("mass", "0.1056583755"),
-        pdgId = _muonVar("pdgId", "-13*charge"),
+        **speciesVars,
         charge = _v.charge.clone(),
         ptErr = _muonVar("ptErr", "ptError()"),
         tightCharge = _muonVar("tightCharge", "?(ptError()/pt() < 0.2)?2:0"),
@@ -126,6 +124,18 @@ muonTable = cms.EDProducer("SimpleTrackFlatTableProducer",
         VXBS_Cov00 = _muonVar("VXBS_Cov00", "covariance(0,0)"),
         VXBS_Cov03 = _muonVar("VXBS_Cov03", "covariance(0,3)"),
         VXBS_Cov33 = _muonVar("VXBS_Cov33", "covariance(3,3)"),
+    )
+
+muonTable = cms.EDProducer("SimpleTrackFlatTableProducer",
+    src = _tracks,
+    cut = cms.string(""),
+    name = cms.string("Muon"),
+    doc = cms.string("AlCaReco muon tracks (ALCARECO%s)" % _DEFAULT_SKIM),
+    singleton = cms.bool(False),
+    extension = cms.bool(False),
+    variables = _trackTableVariables(
+        mass = _muonVar("mass", "0.1056583755"),
+        pdgId = _muonVar("pdgId", "-13*charge"),
     ),
     externalVariables = cms.PSet(
         dxy = ExtVar(cms.InputTag("muonIP:dxy"), float, doc=_v.dxy.doc.value(), precision=_v.dxy.precision.value()),
@@ -266,6 +276,11 @@ alcarecoNanoTaskMC = cms.Task(
 )
 alcarecoNanoSequenceMC = cms.Sequence(alcarecoNanoTaskMC)
 
+def _isMC(process):
+    """MC runs alcarecoNanoSequenceMC, the only sequence with the ideal-geometry refit."""
+    return process.nanoAOD_step.contains(process.trackrefitideal)
+
+
 _trackConsumers = ("trackrefit", "trackrefitideal", "muonIP", "muonBSConstrain", "muonTable",
                    "muonCvhIdealTable", "muonExternalVecVarsTable", "muonExternalVecVarsMCTable", "muonCands",
                    "cvhGenMatch", "cvhIdealGenMatch")
@@ -298,7 +313,7 @@ def nanoAOD_alcareco(process, skim, calib=False, alcareco="central"):
         process.dimuonTable = _calibDimuonTable.clone()
         process.dimuonVecVarsTable = _calibDimuonVecVarsTable.clone()
         process.cvhParmCatalogTable = _calibParmCatalogTable.clone()
-        isMC = process.nanoAOD_step.contains(process.trackrefitideal)
+        isMC = _isMC(process)
         task = process.alcarecoNanoTaskMC if isMC else process.alcarecoNanoTask
         task.add(process.dimuonCandidates, process.trackrefitdimuon, process.dimuonTable,
                  process.dimuonVecVarsTable)
@@ -465,7 +480,7 @@ def _prunedGenParticles(process, task):
 
 
 def _wmassAlcareco(process, skim):
-    isMC = process.nanoAOD_step.contains(process.trackrefitideal)
+    isMC = _isMC(process)
     task = process.alcarecoNanoTaskMC if isMC else process.alcarecoNanoTask
     _useStoredBeamSpot(process, task)
     _replace(process, task, "unpackedPatTrigger", _unpackedPatTrigger.clone())
@@ -500,7 +515,7 @@ def nanoAOD_alcarecoL1Stages(process):
     if not hasattr(process, "l1MuonTable") or not process.nanoAOD_step.contains(process.l1MuonTable):
         raise RuntimeError("nanoAOD_alcarecoL1Stages requires a preceding WMass ALCARECO customization")
     from PhysicsTools.NanoAOD.alcareco_l1_cff import l1AlgorithmStages
-    isMC = process.nanoAOD_step.contains(process.trackrefitideal)
+    isMC = _isMC(process)
     task = process.alcarecoNanoTaskMC if isMC else process.alcarecoNanoTask
     _replace(process, task, "l1AlgorithmStagesTable", l1AlgorithmStages.clone())
     return process
@@ -544,7 +559,7 @@ def nanoAOD_alcarecoGun(process, species):
     if species not in _GUN_SPECIES:
         raise RuntimeError("nanoAOD_alcarecoGun: unknown species %r (expected one of %s)"
                            % (species, ", ".join(sorted(_GUN_SPECIES))))
-    if not process.nanoAOD_step.contains(process.trackrefitideal):
+    if not _isMC(process):
         raise RuntimeError("nanoAOD_alcarecoGun: the gun ALCARECO is MC, use alcarecoNanoSequenceMC")
     particle, pdgId, sign, mass, candType = _GUN_SPECIES[species]
     tracks = cms.InputTag(_GUN_TRACKS)
@@ -613,7 +628,7 @@ def nanoAOD_customizeCommon(process):
     refit. For the gun ALCARECO, the gun particles (pions and kaons too) get
     full-precision pt, eta and phi as well."""
     from PhysicsTools.NanoAOD.nano_cff import setup3DFieldForRefit, customizeGenLeptonPrecision
-    isMC = process.nanoAOD_step.contains(process.trackrefitideal)
+    isMC = _isMC(process)
     if isMC:
         process = customizeGenLeptonPrecision(process)
         if _isGun(process):
