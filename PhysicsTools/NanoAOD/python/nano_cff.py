@@ -364,7 +364,9 @@ _DEFAULT_SCALARPOT_INITFILE = _resolveInPath(_SCALARPOT_INITFILE_REL)
 # MC always keeps the default field (the one the simulation used).
 CVH_CORRECTION_MODEL = "module"
 CVH_OPERA_VERSION = "170812"
-_CVH_REFITS = ("trackrefit", "trackrefitideal", "trackrefitbs", "trackrefitdimuon")
+# the TkAlJpsiX joint fits of alcareco_nano_cff (<prefix>Cvh<key>) too
+_CVH_REFITS = ("trackrefit", "trackrefitideal", "trackrefitbs", "trackrefitdimuon",
+               "bToJpsiKCvh", "bToJpsiKCvhIdeal", "bToJpsiKCvhCons")
 
 
 def _cvhSimGeometry(process):
