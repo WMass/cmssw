@@ -280,8 +280,9 @@ alcarecoNanoTaskMC = cms.Task(
 alcarecoNanoSequenceMC = cms.Sequence(alcarecoNanoTaskMC)
 
 def _isMC(process):
-    """MC runs alcarecoNanoSequenceMC, the only sequence with the ideal-geometry refit."""
-    return process.nanoAOD_step.contains(process.trackrefitideal)
+    """MC runs alcarecoNanoSequenceMC, the only sequence with the generator weights
+    (the ideal-geometry refit is not in every MC customisation)."""
+    return process.nanoAOD_step.contains(process.genWeightsTable)
 
 
 _trackConsumers = ("trackrefit", "trackrefitideal", "muonIP", "muonBSConstrain", "muonTable",
@@ -289,7 +290,7 @@ _trackConsumers = ("trackrefit", "trackrefitideal", "muonIP", "muonBSConstrain",
                    "cvhGenMatch", "cvhIdealGenMatch")
 
 
-def nanoAOD_alcareco(process, skim, calib=False, alcareco="central"):
+def nanoAOD_alcareco(process, skim, calib=False, alcareco="central", muonCvh=True):
     """Run on the tracks of the AlCaReco skim `skim` (ALCARECO<skim>).
 
     calib=True (TkAlJpsiMuMu only): add the content from which the module-level
@@ -298,7 +299,10 @@ def nanoAOD_alcareco(process, skim, calib=False, alcareco="central"):
 
     alcareco: the ALCARECO it reads, "central" (the central Run 2 UL ALCARECO) or
     "wmass" (that of WMass/cmssw#54, with the trigger content, the relinked
-    muons and the MiniAOD generator record, see _wmassAlcareco)."""
+    muons and the MiniAOD generator record, see _wmassAlcareco).
+
+    muonCvh=False ("wmass", skims with relinked muons): the Muon table without the
+    single-track CVH refits."""
     if alcareco not in ("central", "wmass"):
         raise RuntimeError("nanoAOD_alcareco: unknown alcareco %r (expected central or wmass)" % alcareco)
     for label in _trackConsumers:
@@ -330,7 +334,7 @@ def nanoAOD_alcareco(process, skim, calib=False, alcareco="central"):
             from PhysicsTools.NanoAOD.nano_cff import _cvhCopyRefitSetup
             _cvhCopyRefitSetup(process, "trackrefitdimuon", 423456789)
     if alcareco == "wmass":
-        _wmassAlcareco(process, skim)
+        _wmassAlcareco(process, skim, muonCvh)
     return process
 
 
@@ -444,9 +448,22 @@ def _useStoredBeamSpot(process, task):
     _replace(process, task, "offlineBeamSpot", None)
 
 
-def _muonTablesFromMuons(process, task, isMC, muons):
-    """The Muon table of the MiniAOD NanoAOD, on the relinked muons `muons`."""
+def _muonTablesFromMuons(process, task, isMC, muons, cvh=True):
+    """The Muon table of the MiniAOD NanoAOD, on the relinked muons `muons`; with
+    cvh=False without the CVH refits."""
     _replace(process, task, "alcarecoPatMuons", _alcarecoPatMuons.clone(muonSource = muons))
+    if not cvh:
+        for label in ("trackrefit", "trackrefitideal", "mergedGlobalIdxs", "muonIP", "muonCands",
+                      "muonCvhIdealTable", "muonExternalVecVarsTable", "muonExternalVecVarsMCTable",
+                      "cvhGenMatch", "cvhIdealGenMatch"):
+            _replace(process, task, label, None)
+        _replace(process, task, "muonBSConstrain", _alcarecoMuonBSConstrain.clone())
+        _replace(process, task, "muonTable", _alcarecoPatMuonTable.clone(
+            doc = "AlCaReco muons (%s): the muons of the selected tracks" % muons))
+        if isMC:
+            _replace(process, task, "muonsMCMatchForTable", _alcarecoPatMuonsMCMatch.clone())
+            _replace(process, task, "muonMCTable", _alcarecoPatMuonMCTable.clone())
+        return
     _replace(process, task, "tracksfrommuons", _alcarecoMuonTracks.clone())
     for label in ("trackrefit", "trackrefitideal"):
         if hasattr(process, label):
@@ -482,7 +499,7 @@ def _prunedGenParticles(process, task):
     process.genParticleTable.externalVariables = _genParticleTable.externalVariables.clone()
 
 
-def _wmassAlcareco(process, skim):
+def _wmassAlcareco(process, skim, muonCvh=True):
     isMC = _isMC(process)
     task = process.alcarecoNanoTaskMC if isMC else process.alcarecoNanoTask
     _useStoredBeamSpot(process, task)
@@ -493,7 +510,7 @@ def _wmassAlcareco(process, skim):
     _replace(process, task, "l1MuonTable", l1MuonTable.clone())
     _replace(process, task, "l1bits", _l1bits.clone())
     if skim in _RELINKED_MUONS:
-        _muonTablesFromMuons(process, task, isMC, "ALCARECO%sMuons" % skim)
+        _muonTablesFromMuons(process, task, isMC, "ALCARECO%sMuons" % skim, muonCvh)
     if isMC:
         process.puTable.src = "slimmedAddPileupInfo"
         _replace(process, task, "genFilterTable", None)
@@ -954,7 +971,7 @@ def nanoAOD_alcarecoPGun(process):
 
 
 def _isGun(process):
-    return process.trackrefit.src.getModuleLabel() == _GUN_TRACKS
+    return hasattr(process, "trackrefit") and process.trackrefit.src.getModuleLabel() == _GUN_TRACKS
 
 
 def nanoAOD_customizeCommon(process):
