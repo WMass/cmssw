@@ -41,6 +41,12 @@
 #       --customise PhysicsTools/NanoAOD/alcareco_nano_cff.nanoAOD_alcareco<skim>[Calib] ...
 # with <skim> TkAlJpsiMuMu (the default track source) or TkAlUpsilonMuMu, and
 # the Calib suffix (TkAlJpsiMuMu only) for calib=True.
+# For the ALCARECO of WMass/cmssw#54 (trigger objects, relinked muons, MiniAOD
+# generator record), the customise nanoAOD_alcarecoWMass<skim>[Calib], see
+# _wmassAlcareco.
+# For the MuKPiGun gun ALCARECO (MC, table named Track), see nanoAOD_alcarecoGun:
+#   cmsDriver.py NANO -s NANO:PhysicsTools/NanoAOD/alcareco_nano_cff.alcarecoNanoSequenceMC \
+#       --customise PhysicsTools/NanoAOD/alcareco_nano_cff.nanoAOD_alcareco{MuGun,PiGun,KGun,PGun} ...
 import FWCore.ParameterSet.Config as cms
 from PhysicsTools.NanoAOD.common_cff import Var, ExtVar
 from PhysicsTools.NanoAOD.nano_cff import nanoMetadata, lhcInfoTable
@@ -52,6 +58,12 @@ from PhysicsTools.NanoAOD.genVertex_cff import genVertexTable, genVertexT0Table
 from PhysicsTools.NanoAOD.genparticles_cff import finalGenParticles as _finalGenParticles
 from PhysicsTools.NanoAOD.genparticles_cff import genParticleTable as _genParticleTable
 from PhysicsTools.NanoAOD import muons_cff as _muons
+from PhysicsTools.NanoAOD.cvhGenMatch_cfi import cvhTrackGenMatch as _cvhTrackGenMatch
+from PhysicsTools.NanoAOD.cvhGenMatch_cfi import cvhMuonGenMatch as _cvhMuonGenMatch
+from PhysicsTools.NanoAOD.cvhGenMatch_cfi import cvhTrackIdealGenMatch as _cvhTrackIdealGenMatch
+from PhysicsTools.NanoAOD.cvhGenMatch_cfi import cvhMuonIdealGenMatch as _cvhMuonIdealGenMatch
+from PhysicsTools.NanoAOD.cvhGenMatch_cfi import cvhGenPartIdx as _cvhGenPartIdx
+from PhysicsTools.NanoAOD.cvhGenMatch_cfi import cvhidealGenPartIdx as _cvhidealGenPartIdx
 from RecoVertex.BeamSpotProducer.BeamSpot_cfi import offlineBeamSpot
 from TrackingTools.TransientTrack.TransientTrackBuilder_cfi import TransientTrackBuilderESProducer
 
@@ -143,6 +155,11 @@ muonCvhIdealTable = cms.EDProducer("SimpleTrackFlatTableProducer",
     externalVariables = cms.PSet(),
 )
 _muons._cvhScalarVars(muonCvhIdealTable.externalVariables, "trackrefitideal", "ideal", " (ideal geometry)")
+# This extension is MC-only; each association uses its own refit's direction.
+cvhGenMatch = _cvhTrackGenMatch.clone(src = _tracks)
+cvhIdealGenMatch = _cvhTrackIdealGenMatch.clone(src = _tracks)
+muonCvhIdealTable.externalVariables.cvhGenPartIdx = _cvhGenPartIdx.clone()
+muonCvhIdealTable.externalVariables.cvhidealGenPartIdx = _cvhidealGenPartIdx.clone()
 
 # The Jacobian payload, as muonExternalVecVarsTable of the MiniAOD NanoAOD:
 # data: the nominal refit; MC: the indices merged with the ideal refit's, and
@@ -174,10 +191,12 @@ muonsMCMatchForTable = _muons.muonsMCMatchForTable.clone(src = cms.InputTag("muo
 muonMCTable = _muons.muonMCTable.clone(src = cms.InputTag("muonCands"), objName = "Muon", objType = "Muon")
 
 # --- event tables ----------------------------------------------------------------
-vertexTable = cms.EDProducer("RecoVertexTableProducer",
-    pvSrc = cms.InputTag("offlinePrimaryVertices"),
-    goodPvCut = _vertexTable.goodPvCut,
-    pvName = _vertexTable.pvName,
+# PV/OtherPV of the stock producer, without the PF-candidate sums and the
+# secondary vertices, which the AlCaReco does not keep
+vertexTable = _vertexTable.clone(
+    pvSrc = "offlinePrimaryVertices",
+    pfcSrc = "",
+    svSrc = "",
 )
 puTable = _puTable.clone(src = "addPileupInfo", pvsrc = "offlinePrimaryVertices")
 # the AlCaReco MC keeps the full generator record: prune it as the MiniAOD's
@@ -241,22 +260,29 @@ alcarecoNanoSequence = cms.Sequence(lhcInfoTable, alcarecoNanoTask)
 alcarecoNanoTaskMC = cms.Task(
     nanoMetadata, offlineBeamSpot, trackrefit, trackrefitideal, mergedGlobalIdxs,
     muonIP, muonBSConstrain, muonTable, muonCvhIdealTable, muonExternalVecVarsMCTable,
-    muonCands, finalGenParticles, muonsMCMatchForTable, muonMCTable,
+    muonCands, finalGenParticles, muonsMCMatchForTable, muonMCTable, cvhGenMatch, cvhIdealGenMatch,
     vertexTable, beamSpotTable, puTable, genParticleTable, genTable, genWeightsTable,
     genFilterTable, genVertexTable, genVertexT0Table,
 )
 alcarecoNanoSequenceMC = cms.Sequence(alcarecoNanoTaskMC)
 
 _trackConsumers = ("trackrefit", "trackrefitideal", "muonIP", "muonBSConstrain", "muonTable",
-                   "muonCvhIdealTable", "muonExternalVecVarsTable", "muonExternalVecVarsMCTable", "muonCands")
+                   "muonCvhIdealTable", "muonExternalVecVarsTable", "muonExternalVecVarsMCTable", "muonCands",
+                   "cvhGenMatch", "cvhIdealGenMatch")
 
 
-def nanoAOD_alcareco(process, skim, calib=False):
+def nanoAOD_alcareco(process, skim, calib=False, alcareco="central"):
     """Run on the tracks of the AlCaReco skim `skim` (ALCARECO<skim>).
 
     calib=True (TkAlJpsiMuMu only): add the content from which the module-level
     corrections are derived, the two-track J/psi refit with its Dimuon table,
-    global-fit payload and parameter catalog (see the top of this file)."""
+    global-fit payload and parameter catalog (see the top of this file).
+
+    alcareco: the ALCARECO it reads, "central" (the central Run 2 UL ALCARECO) or
+    "wmass" (that of WMass/cmssw#54, with the trigger content, the relinked
+    muons and the MiniAOD generator record, see _wmassAlcareco)."""
+    if alcareco not in ("central", "wmass"):
+        raise RuntimeError("nanoAOD_alcareco: unknown alcareco %r (expected central or wmass)" % alcareco)
     for label in _trackConsumers:
         if hasattr(process, label):
             getattr(process, label).src = cms.InputTag("ALCARECO" + skim)
@@ -285,6 +311,8 @@ def nanoAOD_alcareco(process, skim, calib=False):
         if hasattr(process, "cvhMasterESProducer"):
             from PhysicsTools.NanoAOD.nano_cff import _cvhCopyRefitSetup
             _cvhCopyRefitSetup(process, "trackrefitdimuon", 423456789)
+    if alcareco == "wmass":
+        _wmassAlcareco(process, skim)
     return process
 
 
@@ -300,6 +328,281 @@ def nanoAOD_alcarecoTkAlUpsilonMuMu(process):
     return nanoAOD_alcareco(process, "TkAlUpsilonMuMu")
 
 
+# --- the WMass ALCARECO (WMass/cmssw#54) -------------------------------------------
+# The ALCARECO of WMass/cmssw#54 (CMSSW_10_6_17_patch1) keeps, beyond the central
+# one:
+#   * the trigger content of MiniAOD: slimmedPatTrigger with the HLT results, the
+#     Stage-2 L1 records (gtStage2Digis, gmtStage2Digis:Muon, caloStage2Digis), and
+#     offlineBeamSpot;
+#   * in TkAlJpsiMuMu the muons of the selected tracks (ALCARECOTkAlJpsiMuMuMuons),
+#     relinked so that their inner track is the stored AlCaReco track;
+#   * in MC slimmedAddPileupInfo and the MiniAOD generator record
+#     (prunedGenParticles, packedGenParticles), and no GenFilterInfo.
+# Hence, nanoAOD_alcareco(..., alcareco="wmass") writes on top of the content
+# above:
+#   * TrigObj, final L1 decisions and all stored L1 muons; optional initial/
+#     intermediate L1 decisions and prescale column via nanoAOD_alcarecoL1Stages;
+#     the stored beam spot replaces the one from the conditions;
+#   * TkAlJpsiMuMu: the Muon table of the MiniAOD NanoAOD, one row per relinked
+#     muon. The muons go through PATMuonProducer (the impact parameters, selector
+#     bits, isolation and soft MVA of a pat::Muon), the beam-spot constraint is the
+#     stock one, and the CVH refits fit the inner tracks and are keyed to the muons
+#     (doMuonAssoc), as in the MiniAOD NanoAOD. The columns of the MiniAOD table
+#     that need PF candidates, jets or the lepton MVAs are not written.
+#     TkAlUpsilonMuMu has no relinked muons and keeps the Muon table on the tracks;
+#   * MC: Pileup from slimmedAddPileupInfo, GenPart from prunedGenParticles with the
+#     isolation from packedGenParticles, as in the MiniAOD NanoAOD, and no GenFilter.
+#     nanoAOD_alcarecoFullGen reads the full genParticles instead, for the #54
+#     builds before the MC-truth pruning.
+from PhysicsTools.PatAlgos.producersLayer1.muonProducer_cfi import patMuons as _patMuons
+from PhysicsTools.NanoAOD.triggerObjects_cff import unpackedPatTrigger as _unpackedPatTrigger
+from PhysicsTools.NanoAOD.triggerObjects_cff import l1bits as _l1bits
+from PhysicsTools.NanoAOD.genparticles_cff import genIso as _genIso
+
+# the skims whose ALCARECO keeps the relinked muons of their tracks
+_RELINKED_MUONS = ("TkAlJpsiMuMu",)
+
+# PATMuonProducer on the relinked muons, without the PF candidate (and its ECAL
+# energy), gen match, MET corrections and muon timing, whose inputs are not in
+# the AlCaReco; the impact parameters, selector bits and soft MVA as in MiniAOD.
+_alcarecoPatMuons = _patMuons.clone(
+    muonSource = "ALCARECOTkAlJpsiMuMuMuons",
+    embedPFCandidate = False,
+    embedPfEcalEnergy = False,
+    embedCaloMETMuonCorrs = False,
+    addInverseBeta = False,
+    addGenMatch = False,
+    embedGenMatch = False,
+    computeSoftMuonMVA = True,
+)
+# The refit input: the inner tracks, i.e. the stored AlCaReco tracks, the only
+# tracks with hits in the AlCaReco (the MiniAOD NanoAOD refits the best track).
+_alcarecoMuonTracks = _muons.tracksfrommuons.clone(src = "alcarecoPatMuons", innerTrackOnly = True)
+_alcarecoMuonBSConstrain = _muons.muonBSConstrain.clone(src = "alcarecoPatMuons",
+                                                     vertices = cms.InputTag("offlinePrimaryVertices"))
+
+# The MiniAOD table without the columns from PF candidates (mini-isolation and
+# the isolation IDs built on it), jets and the lepton MVAs
+_NO_ALCARECO_VARS = ("miniPFRelIso_chg", "miniPFRelIso_all", "miniIsoId", "multiIsoId", "puppiIsoId",
+                     "jetRelIso", "jetPtRelv2", "jetDF", "jetNDauCharged", "mvaMuID", "mvaMuID_WP")
+_ALCARECO_EXT_VARS = ("bsConstrainedPt", "bsConstrainedPtErr", "bsConstrainedChi2")
+_alcarecoPatMuonTable = _muons.muonTable.clone(
+    src = "alcarecoPatMuons",
+    doc = "AlCaReco muons (ALCARECOTkAlJpsiMuMuMuons): the muons of the selected tracks",
+    externalVariables = cms.PSet(**{
+        name: getattr(_muons.muonTable.externalVariables, name).clone() for name in _ALCARECO_EXT_VARS}),
+)
+for _name in _NO_ALCARECO_VARS:
+    delattr(_alcarecoPatMuonTable.variables, _name)
+# the inner-track columns of the Muon table on the tracks
+for _name, _expr in (("innerTrackAlgo", "algo()"), ("innerTrackOriginalAlgo", "originalAlgo()"),
+                     ("nTrackerValidHits", "hitPattern().numberOfValidHits()"),
+                     ("nPixelValidHits", "hitPattern().numberOfValidPixelHits()")):
+    _var = getattr(muonTable.variables, _name).clone()
+    _var.expr = "?innerTrack.isNonnull?innerTrack().%s:-1" % _expr
+    setattr(_alcarecoPatMuonTable.variables, _name, _var)
+_alcarecoPatMuonVecVarsTable = _muons.muonExternalVecVarsTable.clone(src = "alcarecoPatMuons")
+_alcarecoPatMuonVecVarsMCTable = _alcarecoPatMuonVecVarsTable.clone()
+for _name in ("cvhmergedGlobalIdxs", "cvhidealJacRef", "cvhidealMomCov"):
+    setattr(_alcarecoPatMuonVecVarsMCTable.variables, _name,
+            getattr(muonExternalVecVarsMCTable.variables, _name).clone())
+_alcarecoPatMuonsMCMatch = _muons.muonsMCMatchForTable.clone(src = "alcarecoPatMuons")
+_alcarecoPatMuonMCTable = _muons.muonMCTable.clone(src = "alcarecoPatMuons")
+
+
+def _replace(process, task, label, module):
+    """Put `module` under `label` in `task`, in place of the module there."""
+    if hasattr(process, label):
+        task.remove(getattr(process, label))
+        delattr(process, label)
+    if module is not None:
+        setattr(process, label, module)
+        task.add(getattr(process, label))
+
+
+def _useStoredBeamSpot(process, task):
+    """The ALCARECO keeps offlineBeamSpot: read it instead of making it from the
+    conditions."""
+    _replace(process, task, "offlineBeamSpot", None)
+
+
+def _muonTablesFromMuons(process, task, isMC, muons):
+    """The Muon table of the MiniAOD NanoAOD, on the relinked muons `muons`."""
+    _replace(process, task, "alcarecoPatMuons", _alcarecoPatMuons.clone(muonSource = muons))
+    _replace(process, task, "tracksfrommuons", _alcarecoMuonTracks.clone())
+    for label in ("trackrefit", "trackrefitideal"):
+        if hasattr(process, label):
+            refit = getattr(process, label)
+            refit.src = "tracksfrommuons"
+            refit.doMuonAssoc = True
+            refit.trackKeyedOutputs = False
+    _replace(process, task, "muonIP", None)
+    _replace(process, task, "muonCands", None)
+    _replace(process, task, "muonCvhIdealTable", None)
+    _replace(process, task, "muonBSConstrain", _alcarecoMuonBSConstrain.clone())
+    table = _alcarecoPatMuonTable.clone(doc = "AlCaReco muons (%s): the muons of the selected tracks" % muons)
+    _muons._cvhScalarVars(table.externalVariables, "trackrefit", "", "")
+    if isMC:
+        _muons._cvhScalarVars(table.externalVariables, "trackrefitideal", "ideal", " (ideal geometry)")
+        table.externalVariables.cvhGenPartIdx = _cvhGenPartIdx.clone()
+        table.externalVariables.cvhidealGenPartIdx = _cvhidealGenPartIdx.clone()
+    _replace(process, task, "muonTable", table)
+    if isMC:
+        _replace(process, task, "muonExternalVecVarsMCTable", _alcarecoPatMuonVecVarsMCTable.clone(doc = table.doc))
+        _replace(process, task, "muonsMCMatchForTable", _alcarecoPatMuonsMCMatch.clone())
+        _replace(process, task, "muonMCTable", _alcarecoPatMuonMCTable.clone())
+        _replace(process, task, "cvhGenMatch", _cvhMuonGenMatch.clone(src = "alcarecoPatMuons"))
+        _replace(process, task, "cvhIdealGenMatch", _cvhMuonIdealGenMatch.clone(src = "alcarecoPatMuons"))
+    else:
+        _replace(process, task, "muonExternalVecVarsTable", _alcarecoPatMuonVecVarsTable.clone(doc = table.doc))
+
+
+def _prunedGenParticles(process, task):
+    """GenPart from the MiniAOD generator record, as the MiniAOD NanoAOD."""
+    process.finalGenParticles.src = "prunedGenParticles"
+    _replace(process, task, "genIso", _genIso.clone())
+    process.genParticleTable.externalVariables = _genParticleTable.externalVariables.clone()
+
+
+def _wmassAlcareco(process, skim):
+    isMC = process.nanoAOD_step.contains(process.trackrefitideal)
+    task = process.alcarecoNanoTaskMC if isMC else process.alcarecoNanoTask
+    _useStoredBeamSpot(process, task)
+    _replace(process, task, "unpackedPatTrigger", _unpackedPatTrigger.clone())
+    from PhysicsTools.NanoAOD.alcarecoTriggerObjects_cff import alcarecoTriggerObjectTable
+    from PhysicsTools.NanoAOD.alcareco_l1_cff import l1MuonTable
+    _replace(process, task, "triggerObjectTable", alcarecoTriggerObjectTable.clone())
+    _replace(process, task, "l1MuonTable", l1MuonTable.clone())
+    _replace(process, task, "l1bits", _l1bits.clone())
+    if skim in _RELINKED_MUONS:
+        _muonTablesFromMuons(process, task, isMC, "ALCARECO%sMuons" % skim)
+    if isMC:
+        process.puTable.src = "slimmedAddPileupInfo"
+        _replace(process, task, "genFilterTable", None)
+        _prunedGenParticles(process, task)
+
+
+def nanoAOD_alcarecoWMassTkAlJpsiMuMu(process):
+    return nanoAOD_alcareco(process, "TkAlJpsiMuMu", alcareco="wmass")
+
+
+def nanoAOD_alcarecoWMassTkAlJpsiMuMuCalib(process):
+    return nanoAOD_alcareco(process, "TkAlJpsiMuMu", calib=True, alcareco="wmass")
+
+
+def nanoAOD_alcarecoWMassTkAlUpsilonMuMu(process):
+    return nanoAOD_alcareco(process, "TkAlUpsilonMuMu", alcareco="wmass")
+
+
+def nanoAOD_alcarecoL1Stages(process):
+    """Opt in to named initial/intermediate L1 decisions and the BX0 prescale
+    column, after nanoAOD_alcarecoWMass<skim> in the --customise list."""
+    if not hasattr(process, "l1MuonTable") or not process.nanoAOD_step.contains(process.l1MuonTable):
+        raise RuntimeError("nanoAOD_alcarecoL1Stages requires a preceding WMass ALCARECO customization")
+    from PhysicsTools.NanoAOD.alcareco_l1_cff import l1AlgorithmStages
+    isMC = process.nanoAOD_step.contains(process.trackrefitideal)
+    task = process.alcarecoNanoTaskMC if isMC else process.alcarecoNanoTask
+    _replace(process, task, "l1AlgorithmStagesTable", l1AlgorithmStages.clone())
+    return process
+
+
+def nanoAOD_alcarecoFullGen(process):
+    """GenPart from the full genParticles (no isolation), for an ALCARECO of
+    WMass/cmssw#54 that keeps them instead of the MiniAOD generator record. After
+    nanoAOD_alcarecoWMass<skim> in the --customise list."""
+    task = process.alcarecoNanoTaskMC
+    process.finalGenParticles.src = "genParticles"
+    _replace(process, task, "genIso", None)
+    process.genParticleTable.externalVariables = cms.PSet()
+    return process
+
+
+# --- single-particle gun ALCARECO (MuKPiGun UL16, WMass/WMassNanoProduction#38) --
+# The gun ALCARECO keeps the tracks matched to the gun particles (dR < 0.3) as
+# genMatchedTracks, with their extras, hits and clusters: about 12 tracks per
+# event, of which about 2 are the gun pair (particle and antiparticle) and the
+# rest the pileup tracks in the cone. Track_genPartIdx uses the standard Nano
+# match; Track_cvhGenPartIdx and Track_cvhidealGenPartIdx use their respective
+# CVH directions with no relative-pT cut. The generator record is the gun pair,
+# and the pileup summary is slimmedAddPileupInfo.
+# Per species: the refit's particle (mass and, for hadrons, the nuclear-elastic
+# family), the gen match and the table's mass and pdgId. The table is named
+# Track, since it holds pions and kaons too.
+_GUN_TRACKS = "genMatchedTracks"
+_GUN_SPECIES = {
+    # species: (refit particle, |pdgId|, sign of pdgId for a positive charge, mass, candidate type)
+    "MuGun": ("mu", 13, -1, "0.1056583755", "mu+"),
+    "PiGun": ("pi", 211, 1, "0.13957039", "pi+"),
+    "KGun": ("kaon", 321, 1, "0.493677", "K+"),
+    "PGun": ("proton", 2212, 1, "0.93827208943", "p+"),
+}
+
+
+def nanoAOD_alcarecoGun(process, species):
+    """Run on the gun-matched tracks of the MuKPiGun ALCARECO, for the gun
+    species `species` (MuGun, PiGun, KGun or PGun). MC only."""
+    if species not in _GUN_SPECIES:
+        raise RuntimeError("nanoAOD_alcarecoGun: unknown species %r (expected one of %s)"
+                           % (species, ", ".join(sorted(_GUN_SPECIES))))
+    if not process.nanoAOD_step.contains(process.trackrefitideal):
+        raise RuntimeError("nanoAOD_alcarecoGun: the gun ALCARECO is MC, use alcarecoNanoSequenceMC")
+    particle, pdgId, sign, mass, candType = _GUN_SPECIES[species]
+    tracks = cms.InputTag(_GUN_TRACKS)
+    doc = "tracks matched to the %s gun particles (%s), all of the cone" % (species, _GUN_TRACKS)
+    for label in _trackConsumers:
+        if hasattr(process, label):
+            getattr(process, label).src = tracks
+    for label in ("trackrefit", "trackrefitideal"):
+        getattr(process, label).trackParticleName = cms.string(particle)
+        getattr(process, label).genMatchPdgId = cms.int32(pdgId)
+    for label in ("muonTable", "muonCvhIdealTable", "muonExternalVecVarsTable", "muonExternalVecVarsMCTable"):
+        if hasattr(process, label):
+            getattr(process, label).name = "Track"
+    for label in ("muonTable", "muonExternalVecVarsTable", "muonExternalVecVarsMCTable"):
+        if hasattr(process, label):
+            getattr(process, label).doc = doc
+    process.muonTable.variables.mass.expr = mass
+    process.muonTable.variables.mass.doc = "%s mass" % particle
+    process.muonTable.variables.pdgId.expr = "%d*charge" % (sign * pdgId)
+    process.muonTable.variables.pdgId.doc = "PDG code of the gun species, signed by the track charge"
+    process.muonCands.particleType = candType
+    process.muonsMCMatchForTable.mcPdgId = [pdgId]
+    process.cvhGenMatch.mcPdgId = pdgId
+    process.cvhIdealGenMatch.mcPdgId = pdgId
+    process.muonMCTable.objName = "Track"
+    process.muonMCTable.objType = "Track"
+    process.muonMCTable.docString = "MC matching to the status==1 %s gun particles" % species
+    process.puTable.src = "slimmedAddPileupInfo"
+    # the gun ALCARECO keeps offlineBeamSpot
+    _useStoredBeamSpot(process, process.alcarecoNanoTaskMC)
+    # the gun chain has no generator filter, so no GenFilterInfo to write
+    process.alcarecoNanoTaskMC.remove(process.genFilterTable)
+    # the generator record is the gun pair, which the MiniAOD pruning (leptons,
+    # heavy hadrons, ...) would drop for pions and kaons
+    process.finalGenParticles.select = ["keep *"]
+    return process
+
+
+def nanoAOD_alcarecoMuGun(process):
+    return nanoAOD_alcarecoGun(process, "MuGun")
+
+
+def nanoAOD_alcarecoPiGun(process):
+    return nanoAOD_alcarecoGun(process, "PiGun")
+
+
+def nanoAOD_alcarecoKGun(process):
+    return nanoAOD_alcarecoGun(process, "KGun")
+
+
+def nanoAOD_alcarecoPGun(process):
+    return nanoAOD_alcarecoGun(process, "PGun")
+
+
+def _isGun(process):
+    return process.trackrefit.src.getModuleLabel() == _GUN_TRACKS
+
+
 def nanoAOD_customizeCommon(process):
     """cmsDriver's default NANO customisation, which is this function when the
     NANO step loads this cff: the field, geometry and Geant4e setup of the CVH
@@ -307,9 +610,13 @@ def nanoAOD_customizeCommon(process):
     and the default field for MC, the field of the simulation; in MC also the
     full-precision gen leptons of the MiniAOD NanoAOD (nanoGenWmassCustomize).
     MC is the sequence alcarecoNanoSequenceMC, which runs the ideal-geometry
-    refit."""
+    refit. For the gun ALCARECO, the gun particles (pions and kaons too) get
+    full-precision pt, eta and phi as well."""
     from PhysicsTools.NanoAOD.nano_cff import setup3DFieldForRefit, customizeGenLeptonPrecision
     isMC = process.nanoAOD_step.contains(process.trackrefitideal)
     if isMC:
         process = customizeGenLeptonPrecision(process)
+        if _isGun(process):
+            for var in ("pt", "eta", "phi"):
+                getattr(process.genParticleTable.variables, var).precision = cms.string("-1")
     return setup3DFieldForRefit(process, useScalarPot3D=not isMC)

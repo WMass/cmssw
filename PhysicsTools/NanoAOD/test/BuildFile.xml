@@ -9,3 +9,44 @@
 <test name="test-btvNano-check" command="test-btvNano.py">
   <flags PRE_TEST="test-btvNano-run"/>
 </test>
+
+<library file="CvhGenMatchTestPlugins.cc" name="PhysicsToolsNanoAODCvhGenMatchTestPlugins">
+  <use name="DataFormats/Common"/>
+  <use name="DataFormats/HepMCCandidate"/>
+  <use name="DataFormats/PatCandidates"/>
+  <use name="DataFormats/TrackReco"/>
+  <use name="FWCore/Framework"/>
+  <use name="FWCore/ParameterSet"/>
+  <use name="FWCore/Utilities"/>
+  <flags EDM_PLUGIN="1"/>
+</library>
+<test name="test-cvhGenMatch" command="cmsRun ${SCRAM_TEST_PATH}/test_cvhGenMatch_cfg.py"/>
+<test name="test-cvhGenMatch-configuration" command="python3 ${SCRAM_TEST_PATH}/check_cvhGenMatch_configuration.py"/>
+
+<library file="AlcarecoTriggerObjectTestPlugins.cc" name="PhysicsToolsNanoAODAlcarecoTriggerObjectTestPlugins">
+  <use name="DataFormats/HLTReco"/>
+  <use name="DataFormats/L1Trigger"/>
+  <use name="DataFormats/NanoAOD"/>
+  <use name="DataFormats/PatCandidates"/>
+  <use name="FWCore/Framework"/>
+  <use name="FWCore/ParameterSet"/>
+  <use name="FWCore/Utilities"/>
+  <use name="CommonTools/Utils"/>
+  <use name="DataFormats/Math"/>
+  <flags EDM_PLUGIN="1"/>
+</library>
+<test name="test-alcarecoTriggerObjects" command="bash ${SCRAM_TEST_PATH}/test_alcarecoTriggerObjects.sh"/>
+
+<library file="AlcarecoL1TestPlugins.cc" name="PhysicsToolsNanoAODAlcarecoL1TestPlugins">
+  <use name="CondFormats/DataRecord"/>
+  <use name="CondFormats/L1TObjects"/>
+  <use name="DataFormats/Common"/>
+  <use name="DataFormats/L1TGlobal"/>
+  <use name="DataFormats/L1Trigger"/>
+  <use name="DataFormats/NanoAOD"/>
+  <use name="FWCore/Framework"/>
+  <use name="FWCore/ParameterSet"/>
+  <use name="FWCore/Utilities"/>
+  <flags EDM_PLUGIN="1"/>
+</library>
+<test name="test-alcarecoL1" command="bash ${SCRAM_TEST_PATH}/test_alcarecoL1.sh"/>
