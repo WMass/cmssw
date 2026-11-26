@@ -4,6 +4,7 @@
 <use name="geant4core"/>
 <flags CXXFLAGS="-g -Wno-error -Wno-unused-variable"/>
 <use name="FWCore/Framework"/>
+<use name="FWCore/AbstractServices"/>
 <use name="FWCore/PluginManager"/>
 <use name="FWCore/ParameterSet"/>
 <use name="DataFormats/TrackReco"/>

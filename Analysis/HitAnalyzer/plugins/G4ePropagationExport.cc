@@ -34,7 +34,7 @@
 #include "FWCore/MessageLogger/interface/MessageLogger.h"
 #include "FWCore/Utilities/interface/Exception.h"
 #include "FWCore/Utilities/interface/StreamID.h"
-#include "FWCore/Utilities/interface/RandomNumberGenerator.h"
+#include "FWCore/AbstractServices/interface/RandomNumberGenerator.h"
 #include "CommonTools/UtilAlgos/interface/TFileService.h"
 
 #include "MagneticField/Engine/interface/MagneticField.h"

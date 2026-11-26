@@ -164,7 +164,7 @@ namespace {
   }
 
   //Contents of a message which should be reported as an INFO not a ERROR
-  constexpr std::array<const char* const, 12> in_message{
+  constexpr std::array<const char* const, 13> in_message{
       {"no dictionary for class",
        // WMass: LHEEventProduct written by 10_6_X with std::auto_ptr<gen::PdfInfo> pdf_ at
        // ClassVersion 14 (RunIILowPUSummer20UL17 H2ErratumFix samples; checksum unknown to the

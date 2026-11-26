@@ -101,7 +101,7 @@
 #include <functional>
 
 #include "FWCore/ServiceRegistry/interface/Service.h"
-#include "FWCore/Utilities/interface/RandomNumberGenerator.h"
+#include "FWCore/AbstractServices/interface/RandomNumberGenerator.h"
 #include "FWCore/MessageLogger/interface/MessageLogger.h"
 #include "Randomize.hh"   // CLHEP / G4 random engine entry points
 
