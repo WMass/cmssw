@@ -35,10 +35,10 @@
 #include <memory>
 #include <vector>
 
+#include "Analysis/HitAnalyzer/interface/CandidateLegTrack.h"
 #include "DataFormats/Candidate/interface/VertexCompositeCandidate.h"
 #include "DataFormats/Candidate/interface/VertexCompositeCandidateFwd.h"
 #include "DataFormats/Common/interface/Handle.h"
-#include "DataFormats/RecoCandidate/interface/RecoChargedCandidate.h"
 #include "DataFormats/TrackReco/interface/Track.h"
 #include "DataFormats/TrackReco/interface/TrackFwd.h"
 
@@ -51,23 +51,6 @@
 #include "FWCore/Utilities/interface/InputTag.h"
 
 namespace ana_hitanalyzer {
-
-namespace {
-// Leaf tracks of a candidate node, depth-first. Identical to the ordering
-// JpsiXKinematicFitProducer / CandidateLeafTrackIndexProducer use, so leafIdx
-// is a shared key across the three producers.
-void collectLeaves(const reco::Candidate* c,
-                   std::vector<const reco::RecoChargedCandidate*>& out) {
-  if (c == nullptr) return;
-  const auto* rcc = dynamic_cast<const reco::RecoChargedCandidate*>(c);
-  if (rcc != nullptr) {
-    out.push_back(rcc);
-    return;
-  }
-  for (size_t i = 0; i < c->numberOfDaughters(); ++i)
-    collectLeaves(c->daughter(i), out);
-}
-}  // namespace
 
 class CandidateLeafTrackProducer : public edm::stream::EDProducer<> {
 public:
@@ -97,20 +80,23 @@ public:
     for (size_t ic = 0; ic < candH->size(); ++ic) {
       const auto& cand = (*candH)[ic];
 
-      // Canonical leaf ordering -> the global leafIdx of each selected leaf.
-      std::vector<const reco::RecoChargedCandidate*> full;
-      collectLeaves(&cand, full);
+      // Canonical leaf ordering (collectLegs, shared with
+      // JpsiXKinematicFitProducer / CandidateLeafTrackIndexProducer) -> the
+      // global leafIdx of each selected leaf.
+      std::vector<const reco::Candidate*> full;
+      collectLegs(&cand, full);
 
       // Membership sets (pointer identity into `full`).
       //  jpsi     : leaves under daughter(0) (the J/psi composite).
       //  bachelor : the DIRECT leaf daughters of the candidate.
-      std::vector<const reco::RecoChargedCandidate*> jpsiLeaves;
+      std::vector<const reco::Candidate*> jpsiLeaves;
       if (cand.numberOfDaughters() > 0)
-        collectLeaves(cand.daughter(0), jpsiLeaves);
+        collectLegs(cand.daughter(0), jpsiLeaves);
 
       for (size_t g = 0; g < full.size(); ++g) {
-        const reco::RecoChargedCandidate* leaf = full[g];
-        if (leaf->track().isNull()) continue;
+        const reco::Candidate* leaf = full[g];
+        const reco::TrackRef track = legTrack(leaf);
+        if (track.isNull()) continue;
 
         bool selected = false;
         if (wantJpsi) {
@@ -119,14 +105,14 @@ public:
         } else {
           // bachelor: leaf is a DIRECT daughter of the candidate.
           for (size_t id = 0; id < cand.numberOfDaughters(); ++id)
-            if (cand.daughter(id) == static_cast<const reco::Candidate*>(leaf)) {
+            if (cand.daughter(id) == leaf) {
               selected = true;
               break;
             }
         }
         if (!selected) continue;
 
-        tracks->push_back(*leaf->track());  // value copy keeps the TrackExtraRef
+        tracks->push_back(*track);  // value copy keeps the TrackExtraRef
         candIdx->push_back(static_cast<int>(ic));
         leafIdx->push_back(static_cast<int>(g));
       }

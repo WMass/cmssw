@@ -27,7 +27,7 @@
 #include "DataFormats/Math/interface/deltaR.h"
 #include "DataFormats/Common/interface/ValueMap.h"
 #include "DataFormats/Candidate/interface/VertexCompositeCandidate.h"
-#include "DataFormats/RecoCandidate/interface/RecoChargedCandidate.h"
+#include "Analysis/HitAnalyzer/interface/CandidateLegTrack.h"
 
 #include "Math/Vector4Dfwd.h"
 
@@ -52,12 +52,13 @@ namespace {
 // a COMPOSITE daughter is a two-track joint-fit subsystem. These two helpers
 // are the whole of that rule.
 
-// The track behind a leaf daughter, or nullptr if the node is not a leaf
-// charged candidate (i.e. it is composite) or carries a null TrackRef.
+// The track behind a leaf daughter (a RecoChargedCandidate, or a shallow clone of
+// a relinked muon, see CandidateLegTrack.h), or nullptr if the node is composite
+// or carries a null TrackRef.
 const reco::Track* leafTrack(const reco::Candidate* c) {
-  const auto* rcc = dynamic_cast<const reco::RecoChargedCandidate*>(c);
-  if (!rcc || rcc->track().isNull()) return nullptr;
-  return &*rcc->track();
+  const reco::TrackRef r = ana_hitanalyzer::legTrack(c);
+  if (r.isNull()) return nullptr;
+  return &*r;
 }
 
 // The two leaf tracks of a node's first two daughters. Fails (returns false,
@@ -149,12 +150,13 @@ bool compositeProperties(int pdgid, double &mass, double &width, std::string &la
 // Returns false if any leaf is trackless (the candidate is then unusable).
 bool decompose(const reco::Candidate *c, CandidateDecomp &d) {
   if (c == nullptr) return false;
-  const auto *rcc = dynamic_cast<const reco::RecoChargedCandidate *>(c);
-  if (rcc != nullptr) {
-    if (rcc->track().isNull()) return false;
+  if (ana_hitanalyzer::isLeg(c)) {
+    const reco::TrackRef trk = ana_hitanalyzer::legTrack(c);
+    if (trk.isNull()) return false;
+    // the leg's own pdgId: a shallow-clone muon leg carries it like a plain one
     double m = 0., merr = 0.; std::string g4, lab;
-    if (!leafProperties(rcc->pdgId(), m, merr, g4, lab)) return false;
-    d.tracks.push_back(&*rcc->track());
+    if (!leafProperties(c->pdgId(), m, merr, g4, lab)) return false;
+    d.tracks.push_back(&*trk);
     d.masses.push_back(m);
     d.massErrs.push_back(merr);
     d.g4names.push_back(g4);
@@ -441,6 +443,11 @@ private:
   // than its natural one (~1e-13 GeV for a B), which would weight the first
   // allcons residual by ~1e26 and destroy the Gauss-Newton step.
   double motherConstraintWidth_ = 1e-3;
+  // Width of every NON-mother (subsystem) mass constraint, GeV. Negative (the
+  // default) keeps the natural widths of compositeProperties (J/psi 9.29e-5).
+  // A study knob: the J/psi calibration (runCvhJpsi.py, the J/psi calib nano)
+  // uses 1e-5, and the gradient payload depends on the width.
+  double subConstraintWidth_ = -1.;
   // skip a candidate with too few valid hits on any leg.
   unsigned int minValidHitsPerLeg_ = 3;
   // Relative eigenvalue floor for the factored-Hessian storage: modes below
@@ -618,6 +625,10 @@ private:
   // The mother's is the calibration observable, so both are now named
   // explicitly and the ambiguous `jacMass` is gone.
   edm::EDPutTokenT<edm::ValueMap<std::vector<float>>> vmMotherJacMass_, vmJpsiJacMass_;
+  // d(objective)/d(globalparms) at globalIdxs and its largest |entry|, as the
+  // two-track maker's calibration payload (fillGradsFactored_).
+  edm::EDPutTokenT<edm::ValueMap<std::vector<float>>> vmGrad_;
+  edm::EDPutTokenT<edm::ValueMap<float>> vmGradMax_;
   // per-leg fitted momenta, leaf order.
   edm::EDPutTokenT<edm::ValueMap<std::vector<float>>> vmLegPt_, vmLegEta_, vmLegPhi_;
   // NanoAOD keeps only flat tables, and a flat table column must be scalar --
@@ -900,6 +911,8 @@ ResidualGlobalCorrectionMakerNTrackG4e::ResidualGlobalCorrectionMakerNTrackG4e(
       ? iConfig.getParameter<bool>("validateRefJacobian") : false;
   motherConstraintWidth_ = iConfig.existsAs<double>("motherConstraintWidth")
       ? iConfig.getParameter<double>("motherConstraintWidth") : 1e-3;
+  subConstraintWidth_ = iConfig.existsAs<double>("subConstraintWidth")
+      ? iConfig.getParameter<double>("subConstraintWidth") : -1.;
   minValidHitsPerLeg_ = iConfig.existsAs<unsigned int>("minValidHitsPerLeg")
       ? iConfig.getParameter<unsigned int>("minValidHitsPerLeg") : 3u;
   hessFactorTol_ = iConfig.existsAs<double>("hessFactorTol")
@@ -1070,6 +1083,8 @@ ResidualGlobalCorrectionMakerNTrackG4e::ResidualGlobalCorrectionMakerNTrackG4e(
       vmMotherJacMass_ = produces<edm::ValueMap<std::vector<float>>>("motherJacMass");
       vmJpsiJacMass_   = produces<edm::ValueMap<std::vector<float>>>("jpsiJacMass");
       vmHessFactor_    = produces<edm::ValueMap<std::vector<float>>>("hessFactor");
+      vmGrad_          = produces<edm::ValueMap<std::vector<float>>>("grad");
+      vmGradMax_       = produces<edm::ValueMap<float>>("gradMax");
     }
   }
 
@@ -1430,6 +1445,9 @@ void ResidualGlobalCorrectionMakerNTrackG4e::beginStream(edm::StreamID streamid)
 // ------------ method called for each event ------------
 void ResidualGlobalCorrectionMakerNTrackG4e::produce(edm::Event &iEvent, const edm::EventSetup &iSetup)
 {
+  // the parameter catalog, in the first event of each run (produceCatalog)
+  putCatalogOncePerRun(iEvent);
+
   // Sync the material-group k values from corparms_ into the model so the
   // propagator's per-step provider applies the current calibration.
   if (globalMaterialModel_) {
@@ -1801,6 +1819,9 @@ void ResidualGlobalCorrectionMakerNTrackG4e::produce(edm::Event &iEvent, const e
       // Mother-row exception: the mother row gets a numerically sane width, not its
       // natural one. constraints.back() is the mother by construction.
       decomp.constraints.back().width = motherConstraintWidth_;
+      if (subConstraintWidth_ > 0.)
+        for (size_t k = 0; k + 1 < decomp.constraints.size(); ++k)
+          decomp.constraints[k].width = subConstraintWidth_;
 
       decomps.push_back(std::move(decomp));
       bCandIdxPerPair.push_back(
@@ -1858,7 +1879,9 @@ void ResidualGlobalCorrectionMakerNTrackG4e::produce(edm::Event &iEvent, const e
   std::vector<int> vmNiterV(nVMCand, -99), vmFitOkV(nVMCand, 0);
   std::vector<std::vector<int>> vmGlobalIdxsV(nVMCand);
   std::vector<std::vector<float>>
-      vmMotherJacMassV(nVMCand), vmJpsiJacMassV(nVMCand), vmHessFactorV(nVMCand);
+      vmMotherJacMassV(nVMCand), vmJpsiJacMassV(nVMCand), vmHessFactorV(nVMCand),
+      vmGradV(nVMCand);
+  std::vector<float> vmGradMaxV(nVMCand, -99.f);
   // Reference-point jacobians: one accumulator per leg slot plus the shared
   // vertex. A candidate with fewer than kMaxLegs legs leaves the unused slots
   // empty, which the flat-table producer skips.
@@ -5259,6 +5282,8 @@ void ResidualGlobalCorrectionMakerNTrackG4e::produce(edm::Event &iEvent, const e
           vmMotherJacMassV[candCollIdx] = Mother_jacMass;
           vmJpsiJacMassV[candCollIdx]   = Jpsi_jacMass;
           vmHessFactorV[candCollIdx]    = hessfactorv;
+          vmGradV[candCollIdx]          = gradv;
+          vmGradMaxV[candCollIdx]       = gradmax;
         }
       }
 
@@ -5440,6 +5465,8 @@ void ResidualGlobalCorrectionMakerNTrackG4e::produce(edm::Event &iEvent, const e
       putVF(vmMotherJacMass_, vmMotherJacMassV);
       putVF(vmJpsiJacMass_, vmJpsiJacMassV);
       putVF(vmHessFactor_, vmHessFactorV);
+      putVF(vmGrad_, vmGradV);
+      putF(vmGradMax_, vmGradMaxV);
     }
   }
 }

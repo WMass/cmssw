@@ -31,7 +31,7 @@
 #include "DataFormats/Math/interface/deltaR.h"
 #include "DataFormats/Common/interface/ValueMap.h"
 #include "DataFormats/Candidate/interface/VertexCompositeCandidate.h"
-#include "DataFormats/RecoCandidate/interface/RecoChargedCandidate.h"
+#include "Analysis/HitAnalyzer/interface/CandidateLegTrack.h"
 #include "Geometry/CommonTopologies/interface/PixelTopology.h"
 #include "RecoLocalTracker/SiStripRecHitConverter/interface/StripCPE.h"
 #include "RecoLocalTracker/Records/interface/TkStripCPERecord.h"
@@ -63,12 +63,13 @@ namespace {
 // a COMPOSITE daughter is a two-track joint-fit subsystem. These two helpers
 // are the whole of that rule.
 
-// The track behind a leaf daughter, or nullptr if the node is not a leaf
-// charged candidate (i.e. it is composite) or carries a null TrackRef.
+// The track behind a leaf daughter (a RecoChargedCandidate, or a shallow clone of
+// a relinked muon, see CandidateLegTrack.h), or nullptr if the node is composite
+// or carries a null TrackRef.
 const reco::Track* leafTrack(const reco::Candidate* c) {
-  const auto* rcc = dynamic_cast<const reco::RecoChargedCandidate*>(c);
-  if (!rcc || rcc->track().isNull()) return nullptr;
-  return &*rcc->track();
+  const reco::TrackRef r = ana_hitanalyzer::legTrack(c);
+  if (r.isNull()) return nullptr;
+  return &*r;
 }
 
 // The two leaf tracks of a node's first two daughters. Fails (returns false,
