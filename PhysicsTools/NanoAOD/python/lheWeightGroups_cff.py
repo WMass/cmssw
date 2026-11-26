@@ -28,8 +28,10 @@ def nanoAOD_addLHEWeightGroups(process):
     NanoAODEDMEventContent_cff ("keep nanoaodFlatTables_*Table_*_*")."""
     process.lheWeightGroupsTable = lheWeightGroupsTable
     process.genWeightsTableTask.add(process.lheWeightGroupsTable)
+    # both NanoAOD output modules: with the RNTuple one (--rntuple) the stock tables would otherwise be
+    # kept as well, and their LHEScaleWeight/LHEPdfWeight collide with the grouped tables of the same name
     for name, out in process.outputModules.items():
-        if out.type_() == "NanoAODOutputModule":
+        if out.type_() in ("NanoAODOutputModule", "NanoAODRNTupleOutputModule"):
             out.outputCommands.extend([
                 "drop nanoaodFlatTable_genWeightsTable_LHEScale_*",
                 "drop nanoaodFlatTable_genWeightsTable_LHEPdf_*",
