@@ -83,31 +83,44 @@ private:
   std::string m_columnName;
 };
 
+// WMass: where a FlatTable is in the event -- a nanoaod::FlatTable product, or element `index`
+// of a std::vector<nanoaod::FlatTable> product (a variable number of tables per product, fixed
+// within a file, e.g. the grouped LHE weight tables), as the TTree NanoAODOutputModule writes them.
+struct FlatTableRef {
+  FlatTableRef() = default;
+  FlatTableRef(const edm::EDGetToken& t, int i = -1) : token(t), index(i) {}
+  const nanoaod::FlatTable* get(const edm::OccurrenceForOutput& event) const;
+  bool isUninitialized() const { return token.isUninitialized(); }
+
+  edm::EDGetToken token;
+  int index = -1;
+};
+
 class TableOutputFields {
 public:
   TableOutputFields() = default;
-  explicit TableOutputFields(const edm::EDGetToken& token) : m_token(token) {}
+  explicit TableOutputFields(const FlatTableRef& token) : m_token(token) {}
   void createFields(const edm::OccurrenceForOutput& event, ROOT::RNTupleModel& model);
   void bind(ROOT::REntry& entry) const;
   void fillEntry(const nanoaod::FlatTable& table, std::size_t i);
-  const edm::EDGetToken& getToken() const;
-  edm::Handle<nanoaod::FlatTable> getTable(const edm::OccurrenceForOutput& event) const;
+  const FlatTableRef& getToken() const;
+  const nanoaod::FlatTable* getTable(const edm::OccurrenceForOutput& event) const;
 
 private:
-  edm::EDGetToken m_token;
+  FlatTableRef m_token;
   std::vector<std::unique_ptr<FlatTableFieldBase>> m_fields;
 };
 
 class TableOutputVectorFields {
 public:
   TableOutputVectorFields() = default;
-  explicit TableOutputVectorFields(const edm::EDGetToken& token) : m_token(token) {}
+  explicit TableOutputVectorFields(const FlatTableRef& token) : m_token(token) {}
   void createFields(const edm::OccurrenceForOutput& event, ROOT::RNTupleModel& model);
   void bind(ROOT::REntry& entry) const;
   void fill(const edm::OccurrenceForOutput& event);
 
 private:
-  edm::EDGetToken m_token;
+  FlatTableRef m_token;
   std::vector<std::unique_ptr<FlatTableVectorFieldBase>> m_fields;
 };
 
@@ -117,7 +130,7 @@ public:
   // Invariants:
   // * table has a non-empty base name
   // * table has at least one column
-  void add(const edm::EDGetToken& table_token, const nanoaod::FlatTable& table);
+  void add(const FlatTableRef& table_token, const nanoaod::FlatTable& table);
   // Invariants:
   // * m_main not null
   // * m_collectionName not empty
@@ -130,7 +143,7 @@ public:
 
 private:
   // The main table followed by its extensions, the order their columns appear in.
-  std::vector<edm::Handle<nanoaod::FlatTable>> getTables(const edm::OccurrenceForOutput& event) const;
+  std::vector<const nanoaod::FlatTable*> getTables(const edm::OccurrenceForOutput& event) const;
 
   std::string m_collectionName;
   // Taken from the main table: a singleton is written as a record rather than a vector of one.
@@ -142,7 +155,7 @@ private:
 
 class TableCollectionSet {
 public:
-  void add(const edm::EDGetToken& table_token, const nanoaod::FlatTable& table);
+  void add(const FlatTableRef& table_token, const nanoaod::FlatTable& table);
   void createFields(const edm::OccurrenceForOutput& event, ROOT::RNTupleModel& eventModel);
   // Add the flat TTree-style aliases of every collection member: Muon_pt beside Muon.pt. The
   // top-level fields are already flat and have nothing to project.

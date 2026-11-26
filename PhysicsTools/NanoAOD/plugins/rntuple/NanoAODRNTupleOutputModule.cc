@@ -80,6 +80,8 @@ private:
   std::unique_ptr<RNTupleWriter> m_ntuple;
   std::unique_ptr<ROOT::REntry> m_entry;
   std::vector<edm::EDGetToken> m_eventTableTokens;
+  // WMass: std::vector<nanoaod::FlatTable> products, each element written as its own table
+  std::vector<edm::EDGetToken> m_eventTableVectorTokens;
   TableCollectionSet m_tables;
   std::vector<TriggerOutputFields> m_triggers;
   EventStringOutputFields m_evstrings;
@@ -232,6 +234,7 @@ void NanoAODRNTupleOutputModule::openFile(edm::FileBlock const&) {
   // With fileMode NOMERGE the framework closes and reopens the output on every input file, so
   // nothing set up for the previous file may carry over into this one.
   m_eventTableTokens.clear();
+  m_eventTableVectorTokens.clear();
   m_tables = TableCollectionSet();
   m_triggers.clear();
   m_evstrings = EventStringOutputFields();
@@ -275,6 +278,8 @@ void NanoAODRNTupleOutputModule::openFile(edm::FileBlock const&) {
   for (const auto& keep : keeps[edm::InEvent]) {
     if (keep.first->className() == "nanoaod::FlatTable") {
       m_eventTableTokens.push_back(keep.second);
+    } else if (keep.first->className() == "std::vector<nanoaod::FlatTable>") {
+      m_eventTableVectorTokens.push_back(keep.second);
     } else if (keep.first->className() == "edm::TriggerResults") {
       m_triggers.emplace_back(keep.first->processName(), keep.second);
     } else if (keep.first->className() == "std::basic_string<char,std::char_traits<char> >" &&
@@ -330,6 +335,15 @@ void NanoAODRNTupleOutputModule::initializeNTuple(edm::EventForOutput const& iEv
   for (const auto& token : m_eventTableTokens) {
     iEvent.getByToken(token, handle);
     m_tables.add(token, *handle);
+  }
+  // The number of tables in a vector product fixes the schema, so it may not change within a file
+  // (FlatTableRef::get checks it), the same rule the TTree module applies.
+  edm::Handle<std::vector<nanoaod::FlatTable>> vecHandle;
+  for (const auto& token : m_eventTableVectorTokens) {
+    iEvent.getByToken(token, vecHandle);
+    for (std::size_t i = 0; i < vecHandle->size(); ++i) {
+      m_tables.add(FlatTableRef(token, static_cast<int>(i)), (*vecHandle)[i]);
+    }
   }
   m_tables.createFields(iEvent, *model);
 

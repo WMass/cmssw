@@ -52,20 +52,32 @@ void TableOutputFields::fillEntry(const nanoaod::FlatTable& table, std::size_t i
   }
 }
 
-const edm::EDGetToken& TableOutputFields::getToken() const { return m_token; }
+const FlatTableRef& TableOutputFields::getToken() const { return m_token; }
 
-edm::Handle<nanoaod::FlatTable> TableOutputFields::getTable(const edm::OccurrenceForOutput& event) const {
-  edm::Handle<nanoaod::FlatTable> handle;
-  event.getByToken(m_token, handle);
-  return handle;
+const nanoaod::FlatTable* FlatTableRef::get(const edm::OccurrenceForOutput& event) const {
+  if (index < 0) {
+    edm::Handle<nanoaod::FlatTable> handle;
+    event.getByToken(token, handle);
+    return handle.product();
+  }
+  edm::Handle<std::vector<nanoaod::FlatTable>> handle;
+  event.getByToken(token, handle);
+  if (static_cast<std::size_t>(index) >= handle->size()) {
+    throw cms::Exception("LogicError",
+                         "Number of tables in a std::vector<nanoaod::FlatTable> product changed within a file (" +
+                             std::to_string(handle->size()) + " now, table " + std::to_string(index) + " expected)");
+  }
+  return &(*handle)[index];
+}
+
+const nanoaod::FlatTable* TableOutputFields::getTable(const edm::OccurrenceForOutput& event) const {
+  return m_token.get(event);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 
 void TableOutputVectorFields::createFields(const edm::OccurrenceForOutput& event, RNTupleModel& model) {
-  edm::Handle<nanoaod::FlatTable> handle;
-  event.getByToken(m_token, handle);
-  const nanoaod::FlatTable& table = *handle;
+  const nanoaod::FlatTable& table = *m_token.get(event);
   m_fields.reserve(table.nColumns());
   for (std::size_t i = 0; i < table.nColumns(); i++) {
     dispatchColumnType(table.columnType(i), [&](auto tag) {
@@ -82,16 +94,15 @@ void TableOutputVectorFields::bind(ROOT::REntry& entry) const {
 }
 
 void TableOutputVectorFields::fill(const edm::OccurrenceForOutput& event) {
-  edm::Handle<nanoaod::FlatTable> handle;
-  event.getByToken(m_token, handle);
+  const nanoaod::FlatTable& table = *m_token.get(event);
   for (auto& field : m_fields) {
-    field->fillColumn(*handle);
+    field->fillColumn(table);
   }
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 
-void TableCollection::add(const edm::EDGetToken& table_token, const nanoaod::FlatTable& table) {
+void TableCollection::add(const FlatTableRef& table_token, const nanoaod::FlatTable& table) {
   if (m_collectionName.empty()) {
     m_collectionName = table.name();
   }
@@ -106,8 +117,8 @@ void TableCollection::add(const edm::EDGetToken& table_token, const nanoaod::Fla
   m_main = TableOutputFields(table_token);
 }
 
-std::vector<edm::Handle<nanoaod::FlatTable>> TableCollection::getTables(const edm::OccurrenceForOutput& event) const {
-  std::vector<edm::Handle<nanoaod::FlatTable>> tables;
+std::vector<const nanoaod::FlatTable*> TableCollection::getTables(const edm::OccurrenceForOutput& event) const {
+  std::vector<const nanoaod::FlatTable*> tables;
   tables.reserve(m_extensions.size() + 1);
   tables.emplace_back(m_main.getTable(event));
   for (const auto& extension : m_extensions) {
@@ -137,7 +148,7 @@ const std::string& TableCollection::getCollectionName() const { return m_collect
 
 ///////////////////////////////////////////////////////////////////////////////
 
-void TableCollectionSet::add(const edm::EDGetToken& table_token, const nanoaod::FlatTable& table) {
+void TableCollectionSet::add(const FlatTableRef& table_token, const nanoaod::FlatTable& table) {
   // skip empty tables -- requirement of RNTuple to define schema before filling
   if (table.nColumns() == 0) {
     edm::LogWarning("TableCollectionSet") << "Skipping FlatTable '" << table.name() << "': it has no columns\n";

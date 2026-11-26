@@ -16,7 +16,7 @@ public:
   RNTupleCollection() = delete;
   RNTupleCollection(const std::string& name,
                     const std::string& desc,
-                    std::vector<edm::Handle<nanoaod::FlatTable>>& tables,
+                    std::vector<const nanoaod::FlatTable*>& tables,
                     ROOT::RNTupleModel& model,
                     bool singleton);
 
@@ -27,7 +27,7 @@ public:
   void addProjections(ROOT::RNTupleModel& model) const;
 
   void bindBuffer(ROOT::REntry& entry);
-  void fill(std::vector<edm::Handle<nanoaod::FlatTable>>& tables);
+  void fill(std::vector<const nanoaod::FlatTable*>& tables);
 
 private:
   std::string m_name;

@@ -34,7 +34,7 @@ namespace {
 
 RNTupleCollection::RNTupleCollection(const std::string& name,
                                      const std::string& desc,
-                                     std::vector<edm::Handle<nanoaod::FlatTable>>& tables,
+                                     std::vector<const nanoaod::FlatTable*>& tables,
                                      RNTupleModel& model,
                                      bool singleton)
     : m_name(name), m_singleton(singleton) {
@@ -75,7 +75,7 @@ void RNTupleCollection::bindBuffer(REntry& entry) {
   entry.BindRawPtr<void>(m_name, &m_buffer);
 }
 
-void RNTupleCollection::fill(std::vector<edm::Handle<nanoaod::FlatTable>>& tables) {
+void RNTupleCollection::fill(std::vector<const nanoaod::FlatTable*>& tables) {
   unsigned int col_idx = 0;
   size_t col_size = tables.empty() ? 0 : tables[0]->size();
 
