@@ -167,7 +167,7 @@ Geant4ePropagator::~Geant4ePropagator() {
   if (propTotalCalls_ > 0ULL) {
     const unsigned long long fail_total =
         propFailCounts_[0] + propFailCounts_[1] + propFailCounts_[2] + propFailCounts_[3] + propFailCounts_[4] +
-        propFailCounts_[5] + propFailCounts_[6];
+        propFailCounts_[5] + propFailCounts_[6] + propFailCounts_[7];
     std::cout << "Geant4ePropagator::propagateGenericWithJacobianAltD summary"
               << "  calls="        << propTotalCalls_
               << "  failures="     << fail_total
@@ -179,6 +179,9 @@ Geant4ePropagator::~Geant4ePropagator() {
               << "   exit5[offsurface]=" << propFailCounts_[4]
               << "   exit6[fieldbound]=" << propFailCounts_[5]
               << "   exit7[speciesdedx]=" << propFailCounts_[6]
+              << "   exit8[missedtarget]=" << propFailCounts_[7]
+              << "   missedTargetRetries=" << propMissedTargetRetries_
+              << "   missedTargetRecovered=" << propMissedTargetRecovered_
               << "   backwardLegs=" << propBackwardLegs_
               << "   targetResumes=" << propTargetResumes_
               << "   qopRow=layerChord(steps=" << layerSteps_ << ", noChord=" << layerNoChord_
@@ -687,7 +690,61 @@ Geant4ePropagator::propagateGenericWithJacobianAltD(const Eigen::Matrix<double, 
                                                         *groupQOut,
                                                     const sim::FieldModeProvider *fieldModes,
                                                     std::vector<Eigen::Matrix<double, 5, 1>> *modeJacOut) const {
+  // WMass: retry of a leg whose last step crossed the target plane without Geant4 flagging the target
+  // (see the missed-target check in propagateGenericWithJacobianAltDOnce). The retry runs the same leg
+  // with a slightly different step cap, which moves every step boundary, so Geant4 limits the final
+  // step to the plane as on any other leg. Only those rare legs are affected: every other call is the
+  // single attempt it was before. The CGF override is consumed by an attempt, so it is put back for
+  // the retry; all other outputs are reset by each attempt.
+  const double cgfOverrideSaved = cgfOverrideQ_;
+  auto result = propagateGenericWithJacobianAltDOnce(ftsStart, pDest, dB, dxi, dms, dioni, pforced, particleNameOverride,
+                                                     matGroups, groupJacOut, groupQOut, fieldModes, modeJacOut);
+  for (const double capFactor : {0.97, 0.91}) {
+    if (std::get<0>(result) || !missedTarget_) {
+      break;
+    }
+    ++propMissedTargetRetries_;
+    G4UImanager::GetUIpointer()->ApplyCommand(
+        ("/geant4e/limits/stepLength " + std::to_string(capFactor * stepLengthLimit_) + " mm").c_str());
+    cgfOverrideQ_ = cgfOverrideSaved;
+    result = propagateGenericWithJacobianAltDOnce(ftsStart, pDest, dB, dxi, dms, dioni, pforced, particleNameOverride,
+                                                  matGroups, groupJacOut, groupQOut, fieldModes, modeJacOut);
+    G4UImanager::GetUIpointer()->ApplyCommand(
+        ("/geant4e/limits/stepLength " + std::to_string(stepLengthLimit_) + " mm").c_str());
+    if (std::get<0>(result)) {
+      ++propMissedTargetRecovered_;
+    }
+  }
+  return result;
+}
+
+std::tuple<bool,
+           Eigen::Matrix<double, 7, 1>,
+           Eigen::Matrix<double, 5, 5>,
+           Eigen::Matrix<double, 5, 9>,
+           double,
+           Eigen::Matrix<double, 5, 5>,
+           Eigen::Matrix<double, 5, 5>,
+           double,
+           double>
+Geant4ePropagator::propagateGenericWithJacobianAltDOnce(const Eigen::Matrix<double, 7, 1> &ftsStart,
+                                                    const GloballyPositioned<double> &pDest,
+                                                    const Eigen::Vector3d &dB,
+                                                    double dxi,
+                                                    double dms,
+                                                    double dioni,
+                                                    double pforced,
+                                                    const std::string &particleNameOverride,
+                                                    const MaterialGroupModel *matGroups,
+                                                    std::vector<std::pair<int, Eigen::Matrix<double, 5, 1>>>
+                                                        *groupJacOut,
+                                                    std::vector<std::pair<int, Eigen::Matrix<double, 5, 5>>>
+                                                        *groupQOut,
+                                                    const sim::FieldModeProvider *fieldModes,
+                                                    std::vector<Eigen::Matrix<double, 5, 1>> *modeJacOut) const {
   using namespace Eigen;
+
+  missedTarget_ = false;
 
   // Urban + Moliere step logs: one propagate call = one leg; clearing here
   // keeps the logs in sync with the call whose noise matrices the caller
@@ -1022,6 +1079,8 @@ Geant4ePropagator::propagateGenericWithJacobianAltD(const Eigen::Matrix<double, 
   // arrived; beyond it a target-reached report is stale (see the loop end)
   constexpr double kOnSurfaceTolerance = 0.1;
   constexpr int kMaxTargetResumes = 16;
+  // WMass: signed distance of the state to the target plane before the next step (missed-target check)
+  double prevDPlane = pDest.toLocal(Point3DBase<double, GlobalTag>(ftsStart[0], ftsStart[1], ftsStart[2])).z();
   int nTargetResumes = 0;
 
   G4EnergyLossForExtrapolatorForCVH::clearSpeciesDedxInvalid();
@@ -1085,6 +1144,34 @@ Geant4ePropagator::propagateGenericWithJacobianAltD(const Eigen::Matrix<double, 
                 << "  particle=" << g4ParticleName
                 << std::endl;
       return retDefault();
+    }
+
+    // WMass: missed target. Geant4e limits every step to the distance to the target plane and stops
+    // there (state StoppedAtTarget right after the step; rounding often leaves the state a hair past
+    // the plane, which is fine). Rarely, a step that ends on a volume boundary a fraction of a mm past
+    // the plane (seen at TEC module surfaces) crosses it with the state still Propagating: the plane
+    // is then behind the state and the leg runs away until the field-bound or path-length guard
+    // (~1e-5 of the legs; which ones depends on the last bits of the arithmetic, so on the build).
+    // End the attempt here; propagateGenericWithJacobianAltD retries the leg with another step cap.
+    {
+      const G4ThreeVector &mpos = g4eTrajState.GetPosition();
+      const double dPlane = pDest.toLocal(Point3DBase<double, GlobalTag>(
+                                              mpos.x() / CLHEP::cm, mpos.y() / CLHEP::cm, mpos.z() / CLHEP::cm))
+                                .z();
+      if (theG4eData->GetState() == G4ErrorState_Propagating && std::abs(prevDPlane) > 1e-7 &&
+          prevDPlane * dPlane < 0.) {
+        ++propFailCounts_[7];
+        missedTarget_ = true;
+        std::cout << "Geant4e fail[missedtarget]"
+                  << "  dPlane=" << dPlane << "  dPlanePrev=" << prevDPlane
+                  << "  pT0=" << cmsInitMom.perp() << "  eta0=" << cmsInitMom.eta() << "  charge=" << charge
+                  << "  surf_r=" << std::hypot(pDest.position().x(), pDest.position().y())
+                  << "  surf_z=" << pDest.position().z() << "  iter=" << iterations
+                  << "  particle=" << g4ParticleName << std::endl;
+        theG4eManager->GetPropagator()->InvokePostUserTrackingAction(g4eTrajState.GetG4Track());
+        return retDefault();
+      }
+      prevDPlane = dPlane;
     }
 
     // Species dE/dx validity: the hadron reference's species correction

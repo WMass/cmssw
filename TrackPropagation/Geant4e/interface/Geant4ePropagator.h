@@ -140,6 +140,7 @@ public:
                                    std::vector<Eigen::Matrix<double, 5, 1>> *modeJacOut =
                                        nullptr) const;
 
+
   static void CalculateEffectiveZandA(const G4Material *mate, G4double &effZ, G4double &effA);
   // Per-element Moliere sums; definitions in MoliereMsStep below.  `epm`:
   // the projectile is an e+-, whose screening Geant4 takes from a different
@@ -411,7 +412,38 @@ private:
   // fires earliest of the runaway guards), 6 = the hadron reference's
   // species dE/dx correction left its validity during a step (a runaway
   // hadron leg). Dumped from the destructor.
-  mutable std::array<unsigned long long, 7> propFailCounts_{{0ULL, 0ULL, 0ULL, 0ULL, 0ULL, 0ULL, 0ULL}};
+
+  // WMass: one propagation attempt; propagateGenericWithJacobianAltD retries it (see there) when the
+  // last step crossed the target plane without Geant4 flagging the target (missedTarget_).
+  std::tuple<bool,
+             Eigen::Matrix<double, 7, 1>,
+             Eigen::Matrix<double, 5, 5>,
+             Eigen::Matrix<double, 5, 9>,
+             double,
+             Eigen::Matrix<double, 5, 5>,
+             Eigen::Matrix<double, 5, 5>,
+             double,
+             double>
+  propagateGenericWithJacobianAltDOnce(const Eigen::Matrix<double, 7, 1> &ftsStart,
+                                   const GloballyPositioned<double> &pDest,
+                                   const Eigen::Vector3d &dB,
+                                   double dxi,
+                                   double dms,
+                                   double dioni,
+                                   double pforced,
+                                   const std::string &particleNameOverride,
+                                   const MaterialGroupModel *matGroups,
+                                   std::vector<std::pair<int, Eigen::Matrix<double, 5, 1>>>
+                                       *groupJacOut,
+                                   std::vector<std::pair<int, Eigen::Matrix<double, 5, 5>>>
+                                       *groupQOut,
+                                   const sim::FieldModeProvider *fieldModes,
+                                   std::vector<Eigen::Matrix<double, 5, 1>> *modeJacOut) const;
+  mutable std::array<unsigned long long, 8> propFailCounts_{{0ULL, 0ULL, 0ULL, 0ULL, 0ULL, 0ULL, 0ULL, 0ULL}};
+  // WMass: set by an attempt that crossed the target plane unflagged; retries and recoveries of such legs
+  mutable bool missedTarget_ = false;
+  mutable unsigned long long propMissedTargetRetries_{0ULL};
+  mutable unsigned long long propMissedTargetRecovered_{0ULL};
   mutable unsigned long long propTotalCalls_{0ULL};
   // Successful backward legs (anyDirection mode): counted so the frequency
   // of the momentum-flipped frame conversion stays observable per job.
