@@ -734,7 +734,11 @@ class ConfigBuilder(object):
             CppType='NanoAODRNTupleOutputModule' if self._options.rntuple_out else 'NanoAODOutputModule'
         elif self._options.rntuple_out:
             CppType='RNTupleTempOutputModule'
-        if 'RNTuple' in CppType:
+        if CppType == 'NanoAODRNTupleOutputModule':
+            # WMass: the RNTuple NanoAOD keeps the file name it was given (.root): ROOT and uproot tell
+            # the format from the content, and file lists and tools downstream expect .root
+            pass
+        elif 'RNTuple' in CppType:
             fileName = fileName.replace('.root', '.rntpl')
         else:
             fileName = fileName.replace('.rntpl', '.root')
@@ -745,6 +749,11 @@ class ConfigBuilder(object):
                                      dataTier = cms.untracked.string(tier),
                                      filterName = cms.untracked.string(filterName))
                                   )
+        if CppType == 'NanoAODRNTupleOutputModule':
+            # WMass: ZSTD 9 instead of the LZMA 9 of the NANOAOD event content: in RNTuple the two give
+            # the same size and ZSTD reads about twice as fast (with TTree ZSTD would be ~10 % larger)
+            output.compressionAlgorithm = cms.untracked.string('ZSTD')
+            output.compressionLevel = cms.untracked.int32(9)
         return output
     def _updateOutputSelectEvents(self, output, streamType):
         if hasattr(self.process,"generation_step") and streamType!='LHE':
