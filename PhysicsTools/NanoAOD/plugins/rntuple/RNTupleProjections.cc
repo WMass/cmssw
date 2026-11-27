@@ -2,7 +2,10 @@
 
 #include "FWCore/MessageLogger/interface/MessageLogger.h"
 
+#include <ROOT/RField.hxx>
 #include <ROOT/RField/RFieldRecord.hxx>
+#include <ROOT/RField/RFieldSequenceContainer.hxx>
+#include <ROOT/RNTupleUtil.hxx>
 #include <ROOT/RFieldBase.hxx>
 
 #include <memory>
@@ -53,6 +56,24 @@ namespace {
   }
 
 }  // anonymous namespace
+
+void rntupleprojection::addCounter(RNTupleModel& model, const std::string& fieldName) {
+  if (!model.GetFieldNames().contains(fieldName) ||
+      nullptr == dynamic_cast<const ROOT::RVectorField*>(&model.GetConstField(fieldName))) {
+    return;
+  }
+  const std::string name = "n" + fieldName;
+  if (model.GetFieldNames().contains(name)) {
+    warnDuplicate(name, fieldName, "size");
+    return;
+  }
+  auto field = std::make_unique<ROOT::RField<ROOT::RNTupleCardinality<std::uint32_t>>>(name);
+  field->SetDescription("Number of entries in " + fieldName);
+  auto result = model.AddProjectedField(std::move(field), [fieldName](const std::string&) { return fieldName; });
+  if (!result) {
+    warnRefused(name, fieldName, "size", result.GetError()->GetReport());
+  }
+}
 
 std::string rntupleprojection::projectedName(const std::string& fieldName, const std::string& memberName) {
   return fieldName + "_" + memberName;

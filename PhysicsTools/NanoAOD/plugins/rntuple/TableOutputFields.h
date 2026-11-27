@@ -60,6 +60,7 @@ public:
   virtual void bind(ROOT::REntry& entry) const = 0;
   // Copy this field's whole column into the RNTuple entry.
   virtual void fillColumn(const nanoaod::FlatTable& table) = 0;
+  virtual const std::string& fieldName() const = 0;
 };
 
 template <typename T>
@@ -71,6 +72,7 @@ public:
     m_field = RNTupleFieldPtr<std::vector<T>>(name, doc, model);
   }
   void bind(ROOT::REntry& entry) const override { m_field.bind(entry); }
+  const std::string& fieldName() const override { return m_field.getFieldName(); }
   void fillColumn(const nanoaod::FlatTable& table) override {
     auto column = table.columnData<T>(flattablefield::columnIndex(table, m_columnName));
     m_buffer.assign(column.begin(), column.end());
@@ -116,6 +118,7 @@ public:
   TableOutputVectorFields() = default;
   explicit TableOutputVectorFields(const FlatTableRef& token) : m_token(token) {}
   void createFields(const edm::OccurrenceForOutput& event, ROOT::RNTupleModel& model);
+  void addCounters(ROOT::RNTupleModel& model) const;
   void bind(ROOT::REntry& entry) const;
   void fill(const edm::OccurrenceForOutput& event);
 

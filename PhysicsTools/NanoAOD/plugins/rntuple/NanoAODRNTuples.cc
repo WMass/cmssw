@@ -100,6 +100,9 @@ void RunNTuple::createFields(const edm::RunForOutput& iRun, TFile& file) {
   m_flatTables.createFields(iRun, *model);
   if (m_flatProjections) {
     m_flatTables.addProjections(*model);
+    for (const auto& table : m_counterTables) {
+      table.addCounters(*model);
+    }
   }
 
   // See LumiNTuple::createFields for why the bind sits between the freeze and the Append().

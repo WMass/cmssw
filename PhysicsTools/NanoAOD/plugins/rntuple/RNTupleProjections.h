@@ -47,6 +47,14 @@ namespace rntupleprojection {
   // record holds them. Does nothing if the model has no such field, or if it is neither an untyped
   // record nor a vector of one.
   void addForField(ROOT::RNTupleModel& model, const std::string& fieldName);
+
+  // WMass: project the number of entries of the collection field `fieldName` (a vector field: a
+  // collection of records or a vector column) as the top-level field n<fieldName>, as the TTree
+  // output writes it (nMuon, nLHEPdfWeight, nLHEPdfSumw). It is an RNTupleCardinality<std::uint32_t>
+  // read from the offsets of the collection, so nothing is stored for it; RNTuple has no signed
+  // cardinality, so it is unsigned where the TTree counter is an Int_t. Does nothing if the model
+  // has no such vector field; a name already in the model is skipped with a warning.
+  void addCounter(ROOT::RNTupleModel& model, const std::string& fieldName);
 }  // namespace rntupleprojection
 
 #endif

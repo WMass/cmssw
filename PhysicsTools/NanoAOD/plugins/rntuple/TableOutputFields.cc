@@ -1,4 +1,5 @@
 #include "TableOutputFields.h"
+#include "RNTupleProjections.h"
 
 #include "FlatTableColumnDispatch.h"
 #include "FWCore/MessageLogger/interface/MessageLogger.h"
@@ -87,6 +88,12 @@ void TableOutputVectorFields::createFields(const edm::OccurrenceForOutput& event
   }
 }
 
+void TableOutputVectorFields::addCounters(RNTupleModel& model) const {
+  for (const auto& field : m_fields) {
+    rntupleprojection::addCounter(model, field->fieldName());
+  }
+}
+
 void TableOutputVectorFields::bind(ROOT::REntry& entry) const {
   for (const auto& field : m_fields) {
     field->bind(entry);
@@ -133,7 +140,13 @@ void TableCollection::createFields(const edm::OccurrenceForOutput& event, RNTupl
       std::make_unique<RNTupleCollection>(m_collectionName, tables.front()->doc(), tables, eventModel, m_singleton);
 }
 
-void TableCollection::addProjections(RNTupleModel& eventModel) const { m_collection->addProjections(eventModel); }
+void TableCollection::addProjections(RNTupleModel& eventModel) const {
+  m_collection->addProjections(eventModel);
+  // WMass: n<collection>, as the TTree output writes it (not for singletons, which have none)
+  if (!m_singleton) {
+    rntupleprojection::addCounter(eventModel, m_collectionName);
+  }
+}
 
 void TableCollection::bind(ROOT::REntry& entry) const { m_collection->bindBuffer(entry); }
 
@@ -201,6 +214,9 @@ void TableCollectionSet::createFields(const edm::OccurrenceForOutput& event, RNT
 void TableCollectionSet::addProjections(RNTupleModel& eventModel) const {
   for (const auto& collection : m_collections) {
     collection.addProjections(eventModel);
+  }
+  for (const auto& fields : m_vectorFields) {
+    fields.addCounters(eventModel);
   }
 }
 

@@ -11,6 +11,9 @@ public:
   SummaryTableOutputFields(const nanoaod::MergeableCounterTable &tab, ROOT::RNTupleModel &model);
   void fill(const nanoaod::MergeableCounterTable &tab);
 
+  // WMass: n<column> of the vector columns, as the TTree output writes them (nLHEPdfSumw)
+  void addCounters(ROOT::RNTupleModel &model) const;
+
 private:
   template <typename T, typename Col>
   std::vector<RNTupleFieldPtr<T>> makeFields(const std::vector<Col> &tabcols, ROOT::RNTupleModel &model);

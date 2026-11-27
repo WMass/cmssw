@@ -1,4 +1,5 @@
 #include "SummaryTableOutputFields.h"
+#include "RNTupleProjections.h"
 
 using ROOT::RNTupleModel;
 
@@ -47,4 +48,16 @@ void SummaryTableOutputFields::fill(const nanoaod::MergeableCounterTable &tab) {
   fillFields(tab.vintCols(), m_vintFields);
   fillFields(tab.vfloatCols(), m_vfloatFields);
   fillFields(tab.vfloatWithNormCols(), m_vfloatWithNormFields);
+}
+
+void SummaryTableOutputFields::addCounters(RNTupleModel &model) const {
+  for (const auto &f : m_vintFields) {
+    rntupleprojection::addCounter(model, f.getFieldName());
+  }
+  for (const auto &f : m_vfloatFields) {
+    rntupleprojection::addCounter(model, f.getFieldName());
+  }
+  for (const auto &f : m_vfloatWithNormFields) {
+    rntupleprojection::addCounter(model, f.getFieldName());
+  }
 }
